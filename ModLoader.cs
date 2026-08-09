@@ -154,7 +154,15 @@ namespace Modding
                 Directory.CreateDirectory(text2);
             }
 
+            try
+        {
             ModHooks.LoadGlobalSettings();
+        }
+        catch (Exception ex)
+        {
+            Logger.APILogger.LogError($"Failed to load global settings: {ex.Message}");
+        }
+
             Logger.ClearOldModlogs();
             Logger.APILogger.LogDebug("Loading assemblies and constructing mods");
 			string[] files = Directory.GetDirectories(text2).Except(new string[1] { Path.Combine(text2, "Disabled") }).SelectMany((string d) => Directory.GetFiles(d, "*.dll"))

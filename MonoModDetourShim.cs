@@ -6,94 +6,135 @@ namespace MonoMod.RuntimeDetour
 {
     public class Detour : IDisposable
     {
-        private readonly MethodBase _original;
-        private readonly Delegate _replacement;
+        private readonly MethodInfo _original;
+        private Delegate _replacement;
+        private Delegate _originalDelegate;
         private bool _disposed;
 
-        public Detour(MethodBase original, Delegate replacement)
+        private Detour(MethodInfo original, Delegate replacement)
         {
-            _original = original ?? throw new ArgumentNullException(nameof(original));
-            _replacement = replacement ?? throw new ArgumentNullException(nameof(replacement));
+            _original = original;
+            _replacement = replacement;
+        }
+
+        public Detour(MethodBase original, Delegate replacement)
+            : this(original as MethodInfo, replacement)
+        {
+            if (_original == null) throw new ArgumentException("Only methods are supported.", nameof(original));
+            if (_replacement == null) throw new ArgumentNullException(nameof(replacement));
+            Apply();
+        }
+
+        public Detour(MethodBase original, MethodInfo replacement)
+            : this(original as MethodInfo, CreateBoundDelegate(original, replacement))
+        {
+            if (_original == null) throw new ArgumentException("Only methods are supported.", nameof(original));
+            if (_replacement == null) throw new ArgumentNullException(nameof(replacement));
+            Apply();
+        }
+
+        internal static Delegate CreateBoundDelegate(MethodBase original, MethodInfo replacement)
+        {
+            if (replacement == null) throw new ArgumentNullException(nameof(replacement));
+            if (original is MethodInfo mi)
+            {
+                Type dt = DetourBridge.GetDelegateTypeForMethod(mi);
+                if (dt != null) return Delegate.CreateDelegate(dt, replacement);
+                throw new NotSupportedException("Unsupported target signature: " + mi.Name);
+            }
+            throw new ArgumentException("Only methods are supported.", nameof(original));
+        }
+
+        public MethodBase Method => _original;
+        public Delegate Original => _originalDelegate;
+        public bool IsApplied => _originalDelegate != null;
+        public bool IsDisposed => _disposed;
+
+        private void Apply()
+        {
+            RemoveCurrent();
 
 #if ENABLE_IL2CPP
             if (DetourBridge.IsAvailable)
             {
-                if (original is MethodInfo originalMethod)
+                if (IsOrigPattern(_replacement))
                 {
-                    MethodInfo replacementMethod = replacement.Method;
-                    DetourBridge.CreateDetour(originalMethod, replacementMethod);
+                    if (DetourBridge.TryCreateOrigDetour(_original, _replacement, out Delegate tramp, out string err))
+                    {
+                        _originalDelegate = tramp;
+                    }
+                    else
+                    {
+                        Logger.APILogger.LogWarn("Orig detour for " + _original.Name + " failed: " + err);
+                    }
+                }
+                else
+                {
+                    _originalDelegate = DetourBridge.CreateDetour(_original, _replacement.Method);
+                    if (_originalDelegate == null)
+                        Logger.APILogger.LogWarn("Direct detour for " + _original.Name + " failed.");
                 }
             }
             else
             {
-                Modding.Logger.APILogger.LogWarn($"Dobby not available, detour for {original} will not work on IL2CPP.");
+                Logger.APILogger.LogWarn("Dobby not available. Detour for " + _original.Name + " will not be applied on IL2CPP.");
             }
 #else
+            ApplyMonoDetour();
+#endif
+        }
+
+        private void RemoveCurrent()
+        {
+            if (_originalDelegate != null)
+            {
+                DetourBridge.RemoveDetour(_original);
+                _originalDelegate = null;
+            }
+        }
+
+        private static bool IsOrigPattern(Delegate d)
+        {
+            var ps = d?.Method?.GetParameters();
+            return ps != null && ps.Length > 0 && typeof(Delegate).IsAssignableFrom(ps[0].ParameterType);
+        }
+
+#if !ENABLE_IL2CPP
+        private void ApplyMonoDetour()
+        {
             try
             {
-                var realDetourType = Type.GetType("MonoMod.RuntimeDetour.Detour, MonoMod.RuntimeDetour");
+                Type realDetourType = Type.GetType("MonoMod.RuntimeDetour.Detour, MonoMod.RuntimeDetour");
                 if (realDetourType != null)
                 {
-                    var ctor = realDetourType.GetConstructor(new[] { typeof(MethodBase), typeof(Delegate) });
-                    if (ctor != null)
-                    {
-                        ctor.Invoke(new object[] { original, replacement });
-                    }
+                    Activator.CreateInstance(realDetourType, new object[] { _original, _replacement });
                 }
             }
             catch (Exception ex)
             {
-                Modding.Logger.APILogger.LogError($"Failed to create real detour: {ex.Message}");
+                Logger.APILogger.LogError("Failed to create real MonoMod detour: " + ex.Message);
             }
+        }
 #endif
-        }
-
-        public Detour(MethodBase original, MethodInfo replacement)
-            : this(original, CreateDelegate(original, replacement))
-        {
-        }
-
-        private static Delegate CreateDelegate(MethodBase original, MethodInfo replacement)
-        {
-            if (original is MethodInfo originalMethod)
-            {
-                return Delegate.CreateDelegate(
-                    GetDelegateType(originalMethod),
-                    replacement
-                );
-            }
-            throw new ArgumentException("Only methods are supported for detouring.", nameof(original));
-        }
-
-        private static Type GetDelegateType(MethodInfo method)
-        {
-            System.Reflection.ParameterInfo[] parameters = method.GetParameters();
-            Type returnType = method.ReturnType;
-
-            if (returnType == typeof(void) && parameters.Length == 0)
-            {
-                return typeof(Action);
-            }
-
-            throw new NotSupportedException($"Delegate type generation not yet supported for {method.Name}.");
-        }
 
         public void DetourTo(Delegate replacement)
         {
             if (_disposed) throw new ObjectDisposedException(nameof(Detour));
-            Modding.Logger.APILogger.Log("DetourTo not fully implemented.");
+            if (replacement == null) throw new ArgumentNullException(nameof(replacement));
+            _replacement = replacement;
+            Apply();
+        }
+
+        public void ApplyDetour()
+        {
+            if (_disposed) throw new ObjectDisposedException(nameof(Detour));
+            if (_originalDelegate == null) Apply();
         }
 
         public void Undo()
         {
             if (_disposed) return;
-
-#if ENABLE_IL2CPP
-            if (_original is MethodInfo originalMethod)
-            {
-                DetourBridge.RemoveDetour(originalMethod);
-            }
-#endif
+            RemoveCurrent();
         }
 
         public void Dispose()
@@ -106,15 +147,41 @@ namespace MonoMod.RuntimeDetour
 
     public class Hook : IDisposable
     {
-        private readonly Detour _detour;
+        private readonly MethodBase _method;
+        private Delegate _replacement;
+        private Detour _detour;
         private bool _disposed;
 
         public Hook(MethodBase method, Delegate replacement)
         {
+            _method = method ?? throw new ArgumentNullException(nameof(method));
+            _replacement = replacement ?? throw new ArgumentNullException(nameof(replacement));
             _detour = new Detour(method, replacement);
         }
 
-        public Delegate Original => null;
+        public Hook(MethodBase method, MethodInfo replacement)
+            : this(method, replacement == null ? null : Detour.CreateBoundDelegate(method, replacement))
+        {
+            if (method == null) throw new ArgumentNullException(nameof(method));
+        }
+
+        public MethodBase Method => _method;
+        public Delegate Original => _detour?.Original;
+        public bool IsApplied => _detour != null && _detour.IsApplied;
+        public bool IsDisposed => _disposed;
+
+        public void Apply()
+        {
+            if (_disposed) throw new ObjectDisposedException(nameof(Hook));
+            if (_detour == null) _detour = new Detour(_method, _replacement);
+            else _detour.ApplyDetour();
+        }
+
+        public void Undo()
+        {
+            if (_disposed) return;
+            _detour?.Undo();
+        }
 
         public void Dispose()
         {

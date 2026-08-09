@@ -214,7 +214,6 @@ namespace Modding
         {
             try
             {
-                // test to see if we can load global settings from this mod
                 if (this.globalSettingsType is Type saveType)
                 {
                     if (!File.Exists(_globalSettingsPath))

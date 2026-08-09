@@ -97,32 +97,28 @@ namespace Modding
             {
                 if (!File.Exists(SettingsPath))
                     return;
+        
                 Logger.APILogger.Log("Loading Global Settings");
-                using FileStream fileStream = File.OpenRead(SettingsPath);
-                using var reader = new StreamReader(fileStream);
-                string json = reader.ReadToEnd();
-
-                var de = JsonConvert.DeserializeObject<ModHooksGlobalSettings>(
-                    json,
-                    new JsonSerializerSettings
-                    {
-                        ContractResolver = ShouldSerializeContractResolver.Instance,
-                        TypeNameHandling = TypeNameHandling.Auto,
-                        ObjectCreationHandling = ObjectCreationHandling.Replace,
-                        Converters = JsonConverterTypes.ConverterTypes
-                    }
-                );
-                if (de != null)
+        
+                string json = File.ReadAllText(SettingsPath);
+        
+                var settings = new JsonSerializerSettings
                 {
-                    GlobalSettings = de;
-                    Logger.SetLogLevel(GlobalSettings.LoggingLevel);
-                    Logger.SetUseShortLogLevel(GlobalSettings.ShortLoggingLevel);
-                    Logger.SetIncludeTimestampt(GlobalSettings.IncludeTimestamps);
-                }
+                    Error = (sender, args) =>
+                    {
+                        Logger.APILogger.LogError($"Json error: {args.ErrorContext.Error.Message}");
+                        args.ErrorContext.Handled = true;
+                    },
+                    Converters = new List<JsonConverter>()
+                };
+        
+                GlobalSettings = JsonConvert.DeserializeObject<ModHooksGlobalSettings>(json, settings);
+        
+                Logger.APILogger.Log("Global Settings loaded successfully");
             }
-            catch (Exception e)
+            catch (Exception ex)
             {
-                Logger.APILogger.LogError(e);
+                Logger.APILogger.LogError($"Failed to load global settings: {ex.Message}");
             }
         }
 
