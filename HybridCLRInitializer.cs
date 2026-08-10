@@ -276,9 +276,9 @@ namespace Modding
 
                 if (names.Count == 0)
                 {
-                    names.AddRange(new[]
+                                        names.AddRange(new[]
                     {
-                        "mscorlib.dll", "System.dll", "System.Core.dll", "Assembly-CSharp.dll",
+                        "mscorlib.dll", "System.dll", "System.Core.dll",
                         "UnityEngine.dll", "UnityEngine.CoreModule.dll"
                     });
                 }
