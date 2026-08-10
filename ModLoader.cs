@@ -104,8 +104,24 @@ namespace Modding
             }
 
             HybridCLRInitializer.Initialize();
-            AssemblyLoader.Initialize();
-            DetourBridge.Initialize();
+
+            try
+            {
+                AssemblyLoader.Initialize();
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogError($"AssemblyLoader.Initialize failed: {ex}");
+            }
+
+            try
+            {
+                DetourBridge.Initialize();
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogWarn($"DetourBridge.Initialize failed (continuing boot): {ex.Message}");
+            }
 
             global::ModManagerSettings.Load();
             if (global::ModManagerSettings.GameVanillaMode)
