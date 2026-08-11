@@ -75,15 +75,22 @@ namespace Modding
                 if (files == null || files.Length == 0) { Debug.LogWarning("No hot-update manifest."); yield break; }
                 foreach (string name in files)
                 {
+                    string fileName = Path.GetFileName(name);
+                    if (fileName == "Assembly-CSharp.dll")
+                    {
+                        Debug.Log($"Skipping Assembly-CSharp.dll (AOT only)");
+                        continue;
+                    }
+
                     byte[] bytes = null;
-                    yield return ReadBytesCoroutine(Path.Combine(dir, name), b => bytes = b);
-                    if (bytes == null || bytes.Length == 0) { Debug.LogError("Missing: " + name); continue; }
+                    yield return ReadBytesCoroutine(Path.Combine(dir, fileName), b => bytes = b);
+                    if (bytes == null || bytes.Length == 0) { Debug.LogError("Missing: " + fileName); continue; }
                     try
                     {
                         var asm = Assembly.Load(bytes);
                         Debug.Log("Loaded: " + asm.FullName);
                     }
-                    catch (Exception e) { Debug.LogError("Failed " + name + ": " + e.Message); }
+                    catch (Exception e) { Debug.LogError("Failed " + fileName + ": " + e.Message); }
                 }
             }
 
