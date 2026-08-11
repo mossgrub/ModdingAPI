@@ -111,15 +111,18 @@ namespace Modding
             string globalSettingsFileName = $"{GetType().Name}.GlobalSettings.json";
 
             string location = GetType().Assembly.Location;
-            string directory = Path.GetDirectoryName(location);
-            string globalSettingsOverride = Path.Combine(directory, globalSettingsFileName);
-
-            if (File.Exists(globalSettingsOverride))
+            if (!string.IsNullOrEmpty(location))
             {
-                Log("Overriding Global Settings path with Mod directory");
-                return globalSettingsOverride;
+                string directory = Path.GetDirectoryName(location);
+                string globalSettingsOverride = Path.Combine(directory, globalSettingsFileName);
+
+                if (File.Exists(globalSettingsOverride))
+                {
+                    Log("Overriding Global Settings path with Mod directory");
+                    return globalSettingsOverride;
+                }
             }
-            
+
             return Path.Combine(Application.persistentDataPath, globalSettingsFileName);
         }
 

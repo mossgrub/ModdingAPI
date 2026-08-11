@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
@@ -10,11 +11,13 @@ namespace Modding
     {
         private static bool _useHybridCLR;
         private static bool _resolveSetup;
+        private static readonly ConcurrentDictionary<string, string> _assemblyPathCache = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public static void Initialize()
         {
             _useHybridCLR = HybridCLRInitializer.IsIL2CPP() && HybridCLRInitializer.IsInitialized;
             SetupAssemblyResolve();
+            BuildAssemblyCache();
         }
 
         public static Assembly LoadAssembly(string path)
@@ -94,6 +97,41 @@ namespace Modding
             AppDomain.CurrentDomain.AssemblyResolve -= ResolveModAssembly;
         }
 
+        private static void BuildAssemblyCache()
+        {
+            _assemblyPathCache.Clear();
+            string[] searchPaths = GetAssemblySearchPaths();
+
+            foreach (string searchPath in searchPaths)
+            {
+                if (string.IsNullOrEmpty(searchPath) || !Directory.Exists(searchPath)) continue;
+
+                try
+                {
+                    IndexDirectory(searchPath);
+
+                    foreach (string subDir in Directory.GetDirectories(searchPath, "*", SearchOption.TopDirectoryOnly))
+                    {
+                        IndexDirectory(subDir);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.APILogger.LogError($"Error indexing directory {searchPath}: {ex.Message}");
+                }
+            }
+        }
+
+        private static void IndexDirectory(string dirPath)
+        {
+            string[] files = Directory.GetFiles(dirPath, "*.dll", SearchOption.TopDirectoryOnly);
+            foreach (string file in files)
+            {
+                string fileName = Path.GetFileNameWithoutExtension(file);
+                _assemblyPathCache.TryAdd(fileName, file);
+            }
+        }
+
         private static Assembly ResolveModAssembly(object sender, ResolveEventArgs args)
         {
             try
@@ -104,17 +142,10 @@ namespace Modding
 #if ENABLE_IL2CPP
                 if (assemblyName.StartsWith("MMHOOK_"))
                 {
-                    Logger.APILogger.LogDebug($"Resolving hook assembly {assemblyName} on IL2CPP");
-                    string[] searchPaths = GetAssemblySearchPaths();
-                    foreach (string searchPath in searchPaths)
+                    if (_assemblyPathCache.TryGetValue(assemblyName, out string hookPath))
                     {
-                        if (string.IsNullOrEmpty(searchPath)) continue;
-                        string potentialPath = Path.Combine(searchPath, assemblyName + ".dll");
-                        if (File.Exists(potentialPath))
-                        {
-                            Logger.APILogger.LogDebug($"Resolved hook assembly {assemblyName} from {potentialPath}");
-                            return LoadAssembly(potentialPath);
-                        }
+                        Logger.APILogger.LogDebug($"Resolved hook assembly {assemblyName} from {hookPath}");
+                        return LoadAssembly(hookPath);
                     }
                     Logger.APILogger.LogWarn($"Hook assembly {assemblyName} not found in search paths");
                     return null;
@@ -135,18 +166,10 @@ namespace Modding
                     }
                 }
 
-                string[] fallbackSearchPaths = GetAssemblySearchPaths();
-                
-                foreach (string searchPath in fallbackSearchPaths)
+                if (_assemblyPathCache.TryGetValue(assemblyName, out string potentialPath))
                 {
-                    if (string.IsNullOrEmpty(searchPath)) continue;
-                    
-                    string potentialPath = Path.Combine(searchPath, assemblyName + ".dll");
-                    if (File.Exists(potentialPath))
-                    {
-                        Logger.APILogger.LogDebug($"Resolved assembly {assemblyName} from {potentialPath}");
-                        return LoadAssembly(potentialPath);
-                    }
+                    Logger.APILogger.LogDebug($"Resolved assembly {assemblyName} from {potentialPath}");
+                    return LoadAssembly(potentialPath);
                 }
 
                 return null;
@@ -179,26 +202,26 @@ namespace Modding
         private static string[] GetAssemblySearchPaths()
         {
             var paths = new List<string>();
-            
+
             string modsPath = GetModsPath();
             if (!string.IsNullOrEmpty(modsPath))
             {
                 paths.Add(modsPath);
             }
-            
+
 #if UNITY_ANDROID
             string streamingPath = Application.streamingAssetsPath;
-            
+
             string androidManagedPath = Path.Combine(streamingPath, "bin", "Data", "Managed");
             if (Directory.Exists(androidManagedPath))
             {
                 paths.Add(androidManagedPath);
             }
-            
+
             string hybridCLRPath = Path.Combine(streamingPath, "HybridCLRData", "il2cpp_data", "Managed");
             if (Directory.Exists(hybridCLRPath))
             {
-                paths.Add(hybridCLRPath);
+                 paths.Add(hybridCLRPath);
             }
 #elif UNITY_EDITOR
             paths.Add(@"D:\SteamLibrary\steamapps\common\Hollow Knight\hollow_knight_Data\Managed");
@@ -209,7 +232,7 @@ namespace Modding
                 paths.Add(managedPath);
             }
 #endif
-            
+
             return paths.ToArray();
         }
 
