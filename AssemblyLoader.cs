@@ -12,6 +12,8 @@ namespace Modding
         private static bool _useHybridCLR;
         private static bool _resolveSetup;
         private static readonly ConcurrentDictionary<string, string> _assemblyPathCache = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private static readonly ConcurrentDictionary<string, Assembly> _loadedAssemblies = new ConcurrentDictionary<string, Assembly>(StringComparer.OrdinalIgnoreCase);
+        private static readonly ConcurrentDictionary<string, bool> _loadingAssemblies = new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 
         public static void Initialize()
         {
@@ -28,14 +30,37 @@ namespace Modding
                 return null;
             }
 
+            string fileName = Path.GetFileNameWithoutExtension(path);
+            
+            if (_loadedAssemblies.TryGetValue(fileName, out Assembly cachedAssembly))
+            {
+                return cachedAssembly;
+            }
+
+            if (!_loadingAssemblies.TryAdd(fileName, true))
+            {
+                Logger.APILogger.LogError($"Circular dependency detected for: {fileName}");
+                return null;
+            }
+
             try
             {
-                return _useHybridCLR ? LoadAssemblyHybridCLR(path) : LoadAssemblyMono(path);
+                Assembly asm = _useHybridCLR ? LoadAssemblyHybridCLR(path) : LoadAssemblyMono(path);
+                if (asm != null)
+                {
+                    _loadedAssemblies[fileName] = asm;
+                    _loadedAssemblies[asm.GetName().Name] = asm;
+                }
+                return asm;
             }
             catch (Exception ex)
             {
                 Logger.APILogger.LogError($"Failed to load assembly {path}: {ex.Message}");
                 return null;
+            }
+            finally
+            {
+                _loadingAssemblies.TryRemove(fileName, out _);
             }
         }
 
@@ -76,7 +101,12 @@ namespace Modding
 
             try
             {
-                return Assembly.Load(assemblyBytes);
+                Assembly asm = Assembly.Load(assemblyBytes);
+                if (asm != null)
+                {
+                    _loadedAssemblies[asm.GetName().Name] = asm;
+                }
+                return asm;
             }
             catch (Exception ex)
             {
@@ -139,21 +169,23 @@ namespace Modding
                 AssemblyName requestedName = new AssemblyName(args.Name);
                 string assemblyName = requestedName.Name;
 
+                if (_loadedAssemblies.TryGetValue(assemblyName, out Assembly loaded))
+                {
+                    return loaded;
+                }
+
 #if ENABLE_IL2CPP
                 if (assemblyName.StartsWith("MMHOOK_"))
                 {
                     if (_assemblyPathCache.TryGetValue(assemblyName, out string hookPath))
                     {
-                        Logger.APILogger.LogDebug($"Resolved hook assembly {assemblyName} from {hookPath}");
                         return LoadAssembly(hookPath);
                     }
-                    Logger.APILogger.LogWarn($"Hook assembly {assemblyName} not found in search paths");
                     return null;
                 }
 
                 if (IsMonoModAssembly(assemblyName))
                 {
-                    Logger.APILogger.LogDebug($"Resolving {assemblyName} to the IL2CPP shim host (Assembly-CSharp).");
                     return typeof(AssemblyLoader).Assembly;
                 }
 #endif
@@ -162,13 +194,13 @@ namespace Modding
                 {
                     if (loadedAssembly.GetName().Name == assemblyName)
                     {
+                        _loadedAssemblies[assemblyName] = loadedAssembly;
                         return loadedAssembly;
                     }
                 }
 
                 if (_assemblyPathCache.TryGetValue(assemblyName, out string potentialPath))
                 {
-                    Logger.APILogger.LogDebug($"Resolved assembly {assemblyName} from {potentialPath}");
                     return LoadAssembly(potentialPath);
                 }
 
