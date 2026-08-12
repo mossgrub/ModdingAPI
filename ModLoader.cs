@@ -45,6 +45,8 @@ namespace Modding
 
 		public static ModLoadState LoadState = ModLoadState.NotStarted;
 
+		private static bool _modLoadInitStarted;
+
 		private static ModVersionDraw modVersionDraw;
 
 		public static Dictionary<Type, ModInstance> ModInstanceTypeMap { get; private set; } = new Dictionary<Type, ModInstance>();
@@ -92,8 +94,80 @@ namespace Modding
 			}
 		}
 
+		private static List<Assembly> LoadAssembliesWithDependencyRetry(string[] paths)
+		{
+			var result = new List<Assembly>();
+			var pending = new List<string>(paths);
+			var lastErrors = new Dictionary<string, string>();
+			const int maxPasses = 64;
+
+			for (int pass = 0; pass < maxPasses && pending.Count > 0; pass++)
+			{
+				var stillPending = new List<string>();
+				bool madeProgress = false;
+
+				foreach (string path in pending)
+				{
+					Assembly asm = TryLoadAssemblySilently(path, out string error);
+					if (asm != null)
+					{
+						result.Add(asm);
+						madeProgress = true;
+					}
+					else
+					{
+						stillPending.Add(path);
+						lastErrors[path] = error;
+					}
+				}
+
+				if (!madeProgress)
+				{
+					Logger.APILogger.LogWarn($"No assemblies could be loaded in pass {pass}; stopping dependency retry (still pending: {stillPending.Count}).");
+					pending = stillPending;
+					break;
+				}
+
+				if (stillPending.Count == 0)
+					break;
+
+				pending = stillPending;
+				Logger.APILogger.LogDebug($"Dependency retry pass {pass + 1}: {pending.Count} assemblies still pending.");
+			}
+
+			foreach (string path in pending)
+			{
+				lastErrors.TryGetValue(path, out string err);
+				Logger.APILogger.LogError($"Failed to load assembly (after dependency retries): {path} : {err}");
+			}
+
+			Logger.APILogger.LogDebug($"Loaded {result.Count}/{paths.Length} assemblies (after dependency retry).");
+			return result;
+		}
+
+		private static Assembly TryLoadAssemblySilently(string path, out string error)
+		{
+			error = null;
+			try
+			{
+				return AssemblyLoader.LoadAssembly(path);
+			}
+			catch (Exception ex)
+			{
+				error = ex.Message;
+				return null;
+			}
+		}
+
 		public static IEnumerator LoadModsInit(GameObject coroutineHolder)
         {
+            if (_modLoadInitStarted)
+            {
+                Logger.APILogger.LogWarn("LoadModsInit already started; skipping duplicate initialization.");
+                yield break;
+            }
+            _modLoadInitStarted = true;
+
             try
             {
                 Logger.InitializeFileStream();
@@ -184,30 +258,14 @@ namespace Modding
 			string[] files = Directory.GetDirectories(text2).Except(new string[1] { Path.Combine(text2, "Disabled") }).SelectMany((string d) => Directory.GetFiles(d, "*.dll"))
                 .ToArray();
             Logger.APILogger.LogDebug(string.Join(",\n", files));
-            List<Assembly> list = new List<Assembly>(files.Length);
-            string[] array = files;
-            foreach (string text3 in array)
-            {
-                Logger.APILogger.LogDebug("Loading assembly `" + text3 + "`");
-                try
-                {
-                    list.Add(LoadAssemblySafely(text3));
-                }
-                catch (FileLoadException arg)
-                {
-                    Logger.APILogger.LogError($"Unable to load assembly - {arg}");
-                }
-                catch (BadImageFormatException arg2)
-                {
-                    Logger.APILogger.LogError($"Assembly is bad image. {arg2}");
-                }
-                catch (PathTooLongException)
-                {
-                    Logger.APILogger.LogError("Unable to load, path to dll is too long!");
-                }
-            }
+            List<Assembly> list = LoadAssembliesWithDependencyRetry(files);
             foreach (Assembly item in list)
             {
+                if (item == null)
+                {
+                    Logger.APILogger.LogWarn("Skipping null assembly (failed to load).");
+                    continue;
+                }
                 Logger.APILogger.LogDebug("Loading mods in assembly `" + item.FullName + "`");
                 bool flag = false;
                 try

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Modding.Utils;
 
@@ -83,13 +84,15 @@ namespace Modding
 
         public static IntPtr GetNativeMethodAddress(MethodInfo method)
         {
+            if (method == null) return IntPtr.Zero;
             try
             {
-                return method != null ? method.MethodHandle.GetFunctionPointer() : IntPtr.Zero;
+                RuntimeHelpers.PrepareMethod(method.MethodHandle);
+                return method.MethodHandle.GetFunctionPointer();
             }
             catch (Exception ex)
             {
-                Logger.APILogger.LogWarn("Could not get native address for " + (method == null ? "null" : method.Name) + ": " + ex.Message);
+                Logger.APILogger.LogWarn("Could not get native address for " + method.Name + ": " + ex.Message);
                 return IntPtr.Zero;
             }
         }

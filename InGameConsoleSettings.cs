@@ -48,7 +48,6 @@ namespace Modding
         /// <summary>
         ///     Determines the key used for toggling console
         /// </summary>
-        [JsonConverter(typeof(StringEnumConverter))]
         public KeyCode ToggleHotkey = KeyCode.F10;
 
         /// <summary>

@@ -13,9 +13,6 @@ using System.Linq;
 using Modding.Delegates;
 using Object = UnityEngine.Object;
 
-// ReSharper disable PossibleInvalidCastExceptionInForeachLoop
-// ReSharper disable SuggestVarOrType_SimpleTypes
-
 namespace Modding
 {
     /// <summary>
@@ -109,7 +106,7 @@ namespace Modding
                         Logger.APILogger.LogError($"Json error: {args.ErrorContext.Error.Message}");
                         args.ErrorContext.Handled = true;
                     },
-                    Converters = new List<JsonConverter>()
+                    Converters = JsonConverterTypes.ConverterTypes
                 };
         
                 GlobalSettings = JsonConvert.DeserializeObject<ModHooksGlobalSettings>(json, settings);

@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using JetBrains.Annotations;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Converters;
 
 namespace Modding
 {
@@ -69,7 +68,6 @@ namespace Modding
         /// <summary>
         ///     Determines the strategy used for preloading game objects.
         /// </summary>
-        [JsonConverter(typeof(StringEnumConverter))]
         public PreloadMode PreloadMode = PreloadMode.RepackAssets;
 
         /// <summary>

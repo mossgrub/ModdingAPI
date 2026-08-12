@@ -12,8 +12,6 @@ using MonoMod.Utils;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 
-// ReSharper disable file UnusedMember.Global
-
 namespace Modding
 {
     /// <inheritdoc cref="Loggable" />
@@ -249,7 +247,7 @@ namespace Modding
         }
 
         /// <summary>
-        /// Try to load the global settings from the given path. Returns true if the global settings were successfully loaded.
+        /// Try to load the global settings from the given path.
         /// </summary>
         private bool TryLoadGlobalSettings(string path, Type saveType)
         {

@@ -1,5 +1,6 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Converters;
 using Modding.Converters;
 
 namespace Modding
@@ -18,6 +19,7 @@ namespace Modding
         {
             ConverterTypes = new List<JsonConverter>
             {
+                new StringEnumConverter(),
                 new Vector2Converter(),
                 new Vector3Converter()
             };
