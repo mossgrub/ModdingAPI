@@ -105,7 +105,7 @@ namespace Modding.Menu
                         ? default(DescriptionInfo)
                         : new DescriptionInfo
                         {
-                        Text = entry.Description
+                            Text = entry.Description
                         },
                         Label = entry.Name,
                         Options = entry.Values,
