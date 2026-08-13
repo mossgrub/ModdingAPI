@@ -22,7 +22,7 @@ namespace Modding
         /// </summary>
         /// <returns>A List of tuples containing scene name, object name</returns>
         List<(string, string)> GetPreloadNames();
-        
+
         /// <summary>
         /// A list of requested scenes to be preloaded and actions to execute on loading of those scenes
         /// </summary>

@@ -343,7 +343,7 @@ namespace Modding
 
             return fi == null
                 ? @default
-                : (TCast) (object) ((Func<TObject, TField>) GetInstanceFieldGetter<TObject, TField>(fi))(obj);
+                : (TCast)(object)((Func<TObject, TField>)GetInstanceFieldGetter<TObject, TField>(fi))(obj);
         }
 
         /// <summary>
@@ -359,7 +359,7 @@ namespace Modding
         {
             FieldInfo fi = GetFieldInfo(typeof(TObject), name) ?? throw new MissingFieldException($"Field {name} does not exist!");
 
-            return ((Func<TObject, TField>) GetInstanceFieldGetter<TObject, TField>(fi))(obj);
+            return ((Func<TObject, TField>)GetInstanceFieldGetter<TObject, TField>(fi))(obj);
         }
 
         /// <summary>
@@ -374,7 +374,7 @@ namespace Modding
         {
             FieldInfo fi = GetFieldInfo(typeof(TType), name, false) ?? throw new MissingFieldException($"Field {name} does not exist!");
 
-            return ((Func<TField>) GetStaticFieldGetter<TField>(fi))();
+            return ((Func<TField>)GetStaticFieldGetter<TField>(fi))();
         }
 
         /// <summary>
@@ -389,7 +389,7 @@ namespace Modding
         {
             FieldInfo fi = GetFieldInfo(type, name, false) ?? throw new MissingFieldException($"Field {name} does not exist!");
 
-            return ((Func<TField>) GetStaticFieldGetter<TField>(fi))();
+            return ((Func<TField>)GetStaticFieldGetter<TField>(fi))();
         }
 
         /// <summary>
@@ -410,7 +410,7 @@ namespace Modding
                 return;
             }
 
-            ((Action<TObject, TField>) GetInstanceFieldSetter<TObject, TField>(fi))(obj, value);
+            ((Action<TObject, TField>)GetInstanceFieldSetter<TObject, TField>(fi))(obj, value);
         }
 
         /// <summary>
@@ -425,7 +425,7 @@ namespace Modding
         public static void SetField<TObject, TField>(TObject obj, string name, TField value)
         {
             FieldInfo fi = GetFieldInfo(typeof(TObject), name) ?? throw new MissingFieldException($"Field {name} does not exist!");
-            ((Action<TObject, TField>) GetInstanceFieldSetter<TObject, TField>(fi))(obj, value);
+            ((Action<TObject, TField>)GetInstanceFieldSetter<TObject, TField>(fi))(obj, value);
         }
 
         /// <summary>
@@ -439,7 +439,7 @@ namespace Modding
         public static void SetField<TType, TField>(string name, TField value)
         {
             FieldInfo fi = GetFieldInfo(typeof(TType), name, false) ?? throw new MissingFieldException($"Field {name} does not exist!");
-            ((Action<TField>) GetInstanceFieldSetter<TType, TField>(fi))(value);
+            ((Action<TField>)GetInstanceFieldSetter<TType, TField>(fi))(value);
         }
 
         /// <summary>
@@ -453,7 +453,7 @@ namespace Modding
         public static void SetField<TField>(Type type, string name, TField value)
         {
             FieldInfo fi = GetFieldInfo(type, name, false) ?? throw new MissingFieldException($"Field {name} does not exist!");
-            ((Action<TField>) GetStaticFieldSetter<TField>(fi))(value);
+            ((Action<TField>)GetStaticFieldSetter<TField>(fi))(value);
         }
 
         #endregion
@@ -507,7 +507,7 @@ namespace Modding
         {
             PropertyInfo pi = GetPropertyInfo(typeof(TObject), name) ?? throw new MissingFieldException($"Property {name} does not exist!");
 
-            return ((Func<TObject, TProperty>) GetInstancePropertyGetter<TObject, TProperty>(pi))(obj);
+            return ((Func<TObject, TProperty>)GetInstancePropertyGetter<TObject, TProperty>(pi))(obj);
         }
 
         /// <summary>
@@ -522,7 +522,7 @@ namespace Modding
         {
             PropertyInfo pi = GetPropertyInfo(typeof(TType), name, false);
 
-            return pi == null ? default : ((Func<TProperty>) GetStaticPropertyGetter<TProperty>(pi))();
+            return pi == null ? default : ((Func<TProperty>)GetStaticPropertyGetter<TProperty>(pi))();
         }
 
         /// <summary>
@@ -537,7 +537,7 @@ namespace Modding
         {
             PropertyInfo pi = GetPropertyInfo(type, name, false);
 
-            return pi == null ? default : ((Func<TProperty>) GetStaticPropertyGetter<TProperty>(pi))();
+            return pi == null ? default : ((Func<TProperty>)GetStaticPropertyGetter<TProperty>(pi))();
         }
 
         /// <summary>
@@ -552,7 +552,7 @@ namespace Modding
         public static void SetProperty<TObject, TProperty>(TObject obj, string name, TProperty value)
         {
             PropertyInfo pi = GetPropertyInfo(typeof(TObject), name) ?? throw new MissingFieldException($"Property {name} does not exist!");
-            ((Action<TObject, TProperty>) GetInstancePropertySetter<TObject, TProperty>(pi))(obj, value);
+            ((Action<TObject, TProperty>)GetInstancePropertySetter<TObject, TProperty>(pi))(obj, value);
         }
 
         /// <summary>
@@ -566,7 +566,7 @@ namespace Modding
         public static void SetProperty<TType, TProperty>(string name, TProperty value)
         {
             PropertyInfo pi = GetPropertyInfo(typeof(TType), name, false) ?? throw new MissingFieldException($"Property {name} does not exist!");
-            ((Action<TProperty>) GetStaticPropertySetter<TProperty>(pi))(value);
+            ((Action<TProperty>)GetStaticPropertySetter<TProperty>(pi))(value);
         }
 
         /// <summary>
@@ -580,7 +580,7 @@ namespace Modding
         public static void SetProperty<TProperty>(Type type, string name, TProperty value)
         {
             PropertyInfo pi = GetPropertyInfo(type, name, false) ?? throw new MissingFieldException($"Property {name} does not exist!");
-            ((Action<TProperty>) GetStaticPropertySetter<TProperty>(pi))(value);
+            ((Action<TProperty>)GetStaticPropertySetter<TProperty>(pi))(value);
         }
 
 
@@ -805,7 +805,7 @@ namespace Modding
         public static TReturn CallMethod<TObject, TReturn>(TObject obj, string name, params object[] param)
         {
             MethodInfo mi = GetMethodInfo(typeof(TObject), name) ?? throw new MissingFieldException($"Method {name} does not exist!");
-            return (TReturn) GetFastReflectionDelegate(mi).Invoke(obj, param.Length == 0 ? null : param);
+            return (TReturn)GetFastReflectionDelegate(mi).Invoke(obj, param.Length == 0 ? null : param);
         }
 
         /// <summary>
@@ -856,7 +856,7 @@ namespace Modding
         public static TReturn CallMethod<TReturn>(Type type, string name, params object[] param)
         {
             MethodInfo mi = GetMethodInfo(type, name, false) ?? throw new MissingFieldException($"Method {name} does not exist!");
-            return (TReturn) GetFastReflectionDelegate(mi).Invoke(null, param.Length == 0 ? null : param);
+            return (TReturn)GetFastReflectionDelegate(mi).Invoke(null, param.Length == 0 ? null : param);
         }
 
         /// <summary>

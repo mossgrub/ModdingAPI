@@ -40,9 +40,6 @@ namespace Modding
                 yield return LoadHotUpdate();
                 HybridCLRInitializer.Initialize();
                 yield return null;
-                GameObject mlGO = new GameObject("ModLoader");
-                                UnityEngine.Object.DontDestroyOnLoad(mlGO);
-                mlGO.AddComponent<ModLoaderComponent>();
             }
 
             private IEnumerator LoadMetadata()
@@ -121,17 +118,6 @@ namespace Modding
                     else { result = uwr.downloadHandler?.data; }
                 }
                 onDone(result);
-            }
-        }
-
-        private sealed class ModLoaderComponent : MonoBehaviour
-        {
-            private void Start() { StartCoroutine(LoadRoutine()); }
-            private IEnumerator LoadRoutine()
-            {
-                Debug.Log("Starting mod initialization.");
-                yield return ModLoader.LoadModsInit(gameObject);
-                Debug.Log("Mod initialization complete.");
             }
         }
     }

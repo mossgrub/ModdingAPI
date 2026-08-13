@@ -19,9 +19,6 @@ namespace Modding
 
         public static Dictionary<IMod, MenuScreen> ModScreens = new Dictionary<IMod, MenuScreen>();
 
-        // Due to the lifecycle of the UIManager object, The `EditMenus` event has to be used to create custom menus.
-        // This event is called every time a UIManager is created,
-        // and will also call the added action if the UIManager has already started.
         internal void InitMenuCreation()
         {
             UIManager.BeforeHideDynamicMenu += ToggleMods;
@@ -73,8 +70,8 @@ namespace Modding
                                     ModToggleDelegates? toggleDels = null;
                                     if (modInst.Mod is ITogglableMod itmod)
                                     {
-                                        try 
-                                        {    
+                                        try
+                                        {
                                             if (
                                                 !(
                                                     (modInst.Mod is IMenuMod menuMod && menuMod.ToggleButtonInsideMenu) ||
@@ -120,10 +117,10 @@ namespace Modding
                                                         changedMods[modInst] = enabled;
                                                     },
                                                     GetModEnabled = () => modInst.Enabled,
-                                                    #pragma warning disable CS0618
+#pragma warning disable CS0618
                                                     // Kept for backwards compatability.
-                                                    ApplyChange = () => {  }
-                                                    #pragma warning restore CS0618
+                                                    ApplyChange = () => { }
+#pragma warning restore CS0618
                                                 };
                                             }
                                         }
@@ -134,7 +131,7 @@ namespace Modding
                                     }
                                     if (modInst.Mod is IMenuMod)
                                     {
-                                        try 
+                                        try
                                         {
                                             var menu = CreateModMenu(modInst, toggleDels);
                                             var rt = c.ContentObject.GetComponent<RectTransform>();
@@ -164,7 +161,8 @@ namespace Modding
                                     }
                                     else if (modInst.Mod is ICustomMenuMod icmmod)
                                     {
-                                        try {
+                                        try
+                                        {
                                             var menu = icmmod.GetMenuScreen(this.screen, toggleDels);
                                             var rt = c.ContentObject.GetComponent<RectTransform>();
                                             rt.sizeDelta = new Vector2(0f, rt.sizeDelta.y + 105f);
@@ -254,7 +252,7 @@ namespace Modding
                 {
                     ModLoader.UnloadMod(mod);
                 }
-            } 
+            }
             changedMods.Clear();
         }
 
@@ -276,8 +274,8 @@ namespace Modding
             {
                 toggleEntry = new IMenuMod.MenuEntry
                 {
-                Name = modInst.Name,
-                Values = new string[] {
+                    Name = modInst.Name,
+                    Values = new string[] {
                     Lang.Get("MOH_OFF", "MainMenu"),
                     Lang.Get("MOH_ON", "MainMenu")
                     },
@@ -285,7 +283,7 @@ namespace Modding
                     Loader = () => dels.GetModEnabled() ? 1 : 0,
                 };
             }
-            
+
             var name = modInst.Name;
             var entries = mod.GetMenuData(toggleEntry);
             return MenuUtils.CreateMenuScreen(name, entries, this.screen);

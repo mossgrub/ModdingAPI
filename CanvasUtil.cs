@@ -5,9 +5,6 @@ using JetBrains.Annotations;
 using UnityEngine;
 using UnityEngine.UI;
 
-// ReSharper disable SuggestVarOrType_SimpleTypes
-// ReSharper disable file UnusedMember.Global
-
 namespace Modding
 {
     /// <summary>
@@ -18,20 +15,20 @@ namespace Modding
     {
         private static Font _trajanBold;
         private static Font _trajanNormal;
-        
+
         /// <summary>
         ///     Access to the TrajanBold Font
         /// </summary>
-        public static Font TrajanBold 
+        public static Font TrajanBold
         {
             get
             {
                 if (!_trajanBold)
                     CreateFonts();
-                
+
                 return _trajanBold;
             }
-            
+
         }
 
         /// <summary>
@@ -102,7 +99,7 @@ namespace Modding
         public static Sprite NullSprite(byte[] data = null)
         {
             Texture2D tex = new Texture2D(1, 1);
-            
+
             data ??= new byte[] { 0x00, 0x00, 0x00, 0x00 };
 
             tex.LoadRawTextureData(data);
@@ -436,7 +433,7 @@ namespace Modding
             };
             toggle.colors = cb;
 
-            toggle.onValueChanged.AddListener(delegate(bool b) { action(b); });
+            toggle.onValueChanged.AddListener(delegate (bool b) { action(b); });
 
             ToggleGroup group = parent.GetComponent<ToggleGroup>();
 

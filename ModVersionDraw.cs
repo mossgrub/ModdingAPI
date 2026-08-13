@@ -23,7 +23,7 @@ namespace Modding
             style.normal.textColor = Color.white;
             style.alignment = TextAnchor.UpperLeft;
             style.padding = new RectOffset(5, 5, 5, 5);
-            
+
             if (!ModManagerSettings.ModListDisplay)
             {
                 isVisible = false;
@@ -43,7 +43,7 @@ namespace Modding
                 return;
             }
 
-            if (drawString != null && 
+            if (drawString != null &&
                (UIManager.instance.uiState == UIState.MAIN_MENU_HOME || UIManager.instance.uiState == UIState.PAUSED))
             {
                 Color originalColor = style.normal.textColor;
@@ -56,12 +56,12 @@ namespace Modding
         public void SetVisible(bool visible, float fadeDuration = 0.25f)
         {
             isVisible = visible;
-            
+
             if (fadeCoroutine != null)
             {
                 StopCoroutine(fadeCoroutine);
             }
-            
+
             fadeCoroutine = StartCoroutine(FadeToTarget(fadeDuration));
         }
 
@@ -70,20 +70,20 @@ namespace Modding
             float targetAlpha = isVisible ? 1f : 0f;
             float startAlpha = currentAlpha;
             float elapsed = 0f;
-            
+
             if (duration <= 0f)
             {
                 currentAlpha = targetAlpha;
                 yield break;
             }
-            
+
             while (elapsed < duration)
             {
                 elapsed += Time.unscaledDeltaTime;
                 currentAlpha = Mathf.Lerp(startAlpha, targetAlpha, elapsed / duration);
                 yield return null;
             }
-            
+
             currentAlpha = targetAlpha;
             fadeCoroutine = null;
         }

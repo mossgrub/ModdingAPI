@@ -19,20 +19,20 @@ namespace Modding
 		private ProgressBar progressBar;
 
 		private static string DataPath
-        {
-        get
-           {
-           if (Application.platform == RuntimePlatform.Android)
-           {
-            return Path.Combine(Application.persistentDataPath, "Data");
-           }
-           if (Application.platform != RuntimePlatform.OSXPlayer)
-           {
-            return Application.dataPath;
-           }
-           return Path.Combine(Application.dataPath, "Resources", "Data");
-           }
-        }
+		{
+			get
+			{
+				if (Application.platform == RuntimePlatform.Android)
+				{
+					return Path.Combine(Application.persistentDataPath, "Data");
+				}
+				if (Application.platform != RuntimePlatform.OSXPlayer)
+				{
+					return Application.dataPath;
+				}
+				return Path.Combine(Application.dataPath, "Resources", "Data");
+			}
+		}
 
 		private void Start()
 		{
@@ -47,13 +47,13 @@ namespace Modding
 			bool flag = sceneHooks.Sum((KeyValuePair<string, List<Func<IEnumerator>>> kvp) => kvp.Value.Count) > 0;
 			Logger.APILogger.Log($"Preloading using mode {ModHooks.GlobalSettings.PreloadMode}");
 			PreloadMode preloadMode = ModHooks.GlobalSettings.PreloadMode;
-			
-            if (Application.platform == RuntimePlatform.Android)
-            {
-                Logger.APILogger.LogWarn("Android detected. Changing to full scene loads.");
-                preloadMode = PreloadMode.FullScene;
-            }
-            else if (preloadMode != PreloadMode.FullScene)
+
+			if (Application.platform == RuntimePlatform.Android)
+			{
+				Logger.APILogger.LogWarn("Android detected. Changing to full scene loads.");
+				preloadMode = PreloadMode.FullScene;
+			}
+			else if (preloadMode != PreloadMode.FullScene)
 			{
 				try
 				{
@@ -67,26 +67,26 @@ namespace Modding
 			}
 			switch (preloadMode)
 			{
-			case PreloadMode.FullScene:
-				yield return DoPreloadScenes(toPreload, preloadedObjects, sceneHooks);
-				break;
-			case PreloadMode.RepackScene:
-				yield return DoPreloadRepackedScenes(toPreload, preloadedObjects, sceneHooks);
-				break;
-			case PreloadMode.RepackAssets:
-				if (flag)
-				{
-					Logger.APILogger.LogWarn("Some mods (" + string.Join(", ", sceneHooks.Keys) + ") use scene hooks, falling back to \"RepackScene\" preload mode");
+				case PreloadMode.FullScene:
+					yield return DoPreloadScenes(toPreload, preloadedObjects, sceneHooks);
+					break;
+				case PreloadMode.RepackScene:
 					yield return DoPreloadRepackedScenes(toPreload, preloadedObjects, sceneHooks);
-				}
-				else
-				{
-					yield return DoPreloadAssetBundle(toPreload, preloadedObjects, sceneHooks);
-				}
-				break;
-			default:
-				Logger.APILogger.LogError($"Unknown preload mode {ModHooks.GlobalSettings.PreloadMode}. Expected one of: full-scene, repack-scene, repack-assets");
-				break;
+					break;
+				case PreloadMode.RepackAssets:
+					if (flag)
+					{
+						Logger.APILogger.LogWarn("Some mods (" + string.Join(", ", sceneHooks.Keys) + ") use scene hooks, falling back to \"RepackScene\" preload mode");
+						yield return DoPreloadRepackedScenes(toPreload, preloadedObjects, sceneHooks);
+					}
+					else
+					{
+						yield return DoPreloadAssetBundle(toPreload, preloadedObjects, sceneHooks);
+					}
+					break;
+				default:
+					Logger.APILogger.LogError($"Unknown preload mode {ModHooks.GlobalSettings.PreloadMode}. Expected one of: full-scene, repack-scene, repack-assets");
+					break;
 			}
 			yield return CleanUpPreloading();
 			UnmuteAllAudio();
@@ -223,127 +223,127 @@ namespace Modding
 			repackBundle.Unload(unloadAllLoadedObjects: true);
 		}
 
-// Full Scene Mode
-	private IEnumerator DoPreloadScenes(
-    Dictionary<string, List<(ModLoader.ModInstance Mod, List<string> Preloads)>> toPreload, 
-    IDictionary<ModLoader.ModInstance, Dictionary<string, Dictionary<string, GameObject>>> preloadedObjects, 
-    Dictionary<string, List<Func<IEnumerator>>> sceneHooks, 
-    string scenePrefix = "", 
-    float progressAlpha = 1f, 
-    float progressBeta = 0f)
-{
-    List<string> sceneNames = toPreload.Keys.Union(sceneHooks.Keys).ToList();
-    int totalScenes = sceneNames.Count;
+		// Full Scene Mode
+		private IEnumerator DoPreloadScenes(
+		Dictionary<string, List<(ModLoader.ModInstance Mod, List<string> Preloads)>> toPreload,
+		IDictionary<ModLoader.ModInstance, Dictionary<string, Dictionary<string, GameObject>>> preloadedObjects,
+		Dictionary<string, List<Func<IEnumerator>>> sceneHooks,
+		string scenePrefix = "",
+		float progressAlpha = 1f,
+		float progressBeta = 0f)
+		{
+			List<string> sceneNames = toPreload.Keys.Union(sceneHooks.Keys).ToList();
+			int totalScenes = sceneNames.Count;
 
-    for (int i = 0; i < totalScenes; i++)
-    {
-        string sceneName = sceneNames[i];
+			for (int i = 0; i < totalScenes; i++)
+			{
+				string sceneName = sceneNames[i];
 
-        AsyncOperation loadOp = USceneManager.LoadSceneAsync(scenePrefix + sceneName, LoadSceneMode.Additive);
-        yield return loadOp;
+				AsyncOperation loadOp = USceneManager.LoadSceneAsync(scenePrefix + sceneName, LoadSceneMode.Additive);
+				yield return loadOp;
 
-        yield return GetPreloadObjectsOperation(sceneName);
+				yield return GetPreloadObjectsOperation(sceneName);
 
-        AsyncOperation unloadOp = USceneManager.UnloadSceneAsync(scenePrefix + sceneName);
-        yield return unloadOp;
+				AsyncOperation unloadOp = USceneManager.UnloadSceneAsync(scenePrefix + sceneName);
+				yield return unloadOp;
 
-        progressBar.Progress = (((float)(i + 1) / totalScenes) * progressAlpha) + progressBeta;
+				progressBar.Progress = (((float)(i + 1) / totalScenes) * progressAlpha) + progressBeta;
 
-        if (Application.platform == RuntimePlatform.Android)
-        {
-            yield return Resources.UnloadUnusedAssets();
+				if (Application.platform == RuntimePlatform.Android)
+				{
+					yield return Resources.UnloadUnusedAssets();
 
-            GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced);
-            GC.WaitForPendingFinalizers();
-            GC.Collect();
+					GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced);
+					GC.WaitForPendingFinalizers();
+					GC.Collect();
 
-		    float preloadDelay = ModManagerSettings.PreloadingRate switch
-            {
-                0 => 1.0f,
-                1 => 0.5f,
-                2 => 0.0f,
-                _ => 0.0f
-            };
-        
-            if (preloadDelay > 0)
-            {
-                yield return new WaitForSecondsRealtime(preloadDelay);
-            }
-        }
-    }
+					float preloadDelay = ModManagerSettings.PreloadingRate switch
+					{
+						0 => 1.0f,
+						1 => 0.5f,
+						2 => 0.0f,
+						_ => 0.0f
+					};
 
-    progressBar.Progress = 1f * progressAlpha + progressBeta;
+					if (preloadDelay > 0)
+					{
+						yield return new WaitForSecondsRealtime(preloadDelay);
+					}
+				}
+			}
 
-    Dictionary<string, GameObject> GetModScenePreloadedObjects(ModLoader.ModInstance mod, string sName)
-    {
-        if (!preloadedObjects.TryGetValue(mod, out var value2))
-        {
-            value2 = (preloadedObjects[mod] = new Dictionary<string, Dictionary<string, GameObject>>());
-        }
-        if (!value2.TryGetValue(sName, out var value3))
-        {
-            value3 = (value2[sName] = new Dictionary<string, GameObject>());
-        }
-        return value3;
-    }
+			progressBar.Progress = 1f * progressAlpha + progressBeta;
 
-    IEnumerator GetPreloadObjectsOperation(string sName)
-    {
-        Scene sceneByName = USceneManager.GetSceneByName(scenePrefix + sName);
-        GameObject[] rootObjects = sceneByName.GetRootGameObjects();
-        for (int j = 0; j < rootObjects.Length; j++)
-        {
-            rootObjects[j].SetActive(value: false);
-        }
+			Dictionary<string, GameObject> GetModScenePreloadedObjects(ModLoader.ModInstance mod, string sName)
+			{
+				if (!preloadedObjects.TryGetValue(mod, out var value2))
+				{
+					value2 = (preloadedObjects[mod] = new Dictionary<string, Dictionary<string, GameObject>>());
+				}
+				if (!value2.TryGetValue(sName, out var value3))
+				{
+					value3 = (value2[sName] = new Dictionary<string, GameObject>());
+				}
+				return value3;
+			}
 
-        if (sceneHooks.TryGetValue(sceneByName.name, out var value2))
-        {
-            IEnumerator[] array2 = value2.Select((Func<IEnumerator> x) => x()).ToArray();
-            for (int num3 = 0; num3 < array2.Length; num3++)
-            {
-                yield return array2[num3];
-            }
-        }
+			IEnumerator GetPreloadObjectsOperation(string sName)
+			{
+				Scene sceneByName = USceneManager.GetSceneByName(scenePrefix + sName);
+				GameObject[] rootObjects = sceneByName.GetRootGameObjects();
+				for (int j = 0; j < rootObjects.Length; j++)
+				{
+					rootObjects[j].SetActive(value: false);
+				}
 
-        if (!toPreload.TryGetValue(sName, out List<(ModLoader.ModInstance, List<string>)> value3))
-        {
-            yield break;
-        }
+				if (sceneHooks.TryGetValue(sceneByName.name, out var value2))
+				{
+					IEnumerator[] array2 = value2.Select((Func<IEnumerator> x) => x()).ToArray();
+					for (int num3 = 0; num3 < array2.Length; num3++)
+					{
+						yield return array2[num3];
+					}
+				}
 
-        foreach (var (modInstance, list) in value3)
-        {
-            Logger.APILogger.LogFine("Fetching objects for mod \"" + modInstance.Mod.GetName() + "\"");
-            Dictionary<string, GameObject> dictionary = GetModScenePreloadedObjects(modInstance, sName);
+				if (!toPreload.TryGetValue(sName, out List<(ModLoader.ModInstance, List<string>)> value3))
+				{
+					yield break;
+				}
 
-            foreach (string item2 in list)
-            {
-                Logger.APILogger.LogFine("Fetching object \"" + item2 + "\"");
-                GameObject gameObjectFromArray;
-                try
-                {
-                    gameObjectFromArray = UnityExtensions.GetGameObjectFromArray(rootObjects, item2);
-                }
-                catch (ArgumentException)
-                {
-                    Logger.APILogger.LogWarn("Invalid GameObject name " + item2);
-                    continue;
-                }
+				foreach (var (modInstance, list) in value3)
+				{
+					Logger.APILogger.LogFine("Fetching objects for mod \"" + modInstance.Mod.GetName() + "\"");
+					Dictionary<string, GameObject> dictionary = GetModScenePreloadedObjects(modInstance, sName);
 
-                if (gameObjectFromArray == null)
-                {
-                    Logger.APILogger.LogWarn("Could not find object \"" + item2 + "\" in scene \"" + sName + "\", requested by mod `" + modInstance.Mod.GetName() + "`");
-                }
-                else
-                {
-                    gameObjectFromArray = UnityEngine.Object.Instantiate(gameObjectFromArray);
-                    UnityEngine.Object.DontDestroyOnLoad(gameObjectFromArray);
-                    gameObjectFromArray.SetActive(value: false);
-                    dictionary[item2] = gameObjectFromArray;
-                }
-            }
-        }
-    }
-}
+					foreach (string item2 in list)
+					{
+						Logger.APILogger.LogFine("Fetching object \"" + item2 + "\"");
+						GameObject gameObjectFromArray;
+						try
+						{
+							gameObjectFromArray = UnityExtensions.GetGameObjectFromArray(rootObjects, item2);
+						}
+						catch (ArgumentException)
+						{
+							Logger.APILogger.LogWarn("Invalid GameObject name " + item2);
+							continue;
+						}
+
+						if (gameObjectFromArray == null)
+						{
+							Logger.APILogger.LogWarn("Could not find object \"" + item2 + "\" in scene \"" + sName + "\", requested by mod `" + modInstance.Mod.GetName() + "`");
+						}
+						else
+						{
+							gameObjectFromArray = UnityEngine.Object.Instantiate(gameObjectFromArray);
+							UnityEngine.Object.DontDestroyOnLoad(gameObjectFromArray);
+							gameObjectFromArray.SetActive(value: false);
+							dictionary[item2] = gameObjectFromArray;
+						}
+					}
+				}
+			}
+		}
 
 		private IEnumerator CleanUpPreloading()
 		{

@@ -21,7 +21,6 @@ namespace Modding
     [PublicAPI]
     public class ModHooks
     {
-        // Make sure this is in sync with `/moddingapi.version`.
         private const int _modVersion = 77;
 
         private static readonly string SettingsPath = Path.Combine(Application.persistentDataPath, "ModdingApi.GlobalSettings.json");
@@ -48,7 +47,7 @@ namespace Modding
         /// <summary>
         ///     Version of the Game
         /// </summary>
-        // ReSharper disable once InconsistentNaming
+
         public static GameVersionData version;
 
         static ModHooks()
@@ -73,12 +72,10 @@ namespace Modding
                 Logger.APILogger.LogError("Failed obtaining game version:\n" + e);
             }
 
-            // ReSharper disable once Unity.IncorrectScriptableObjectInstantiation idk it works
             version = new GameVersionData { gameVersion = gameVersion };
 
             ModVersion = version.GetGameVersionString() + "-" + _modVersion;
 
-            // Save global settings only if mods have finished loading
             FinishedLoadingModsHook += () => ApplicationQuitHook += SaveGlobalSettings;
             FinishedLoadingModsHook += () => UnityEngine.Application.focusChanged += focus => { if (!focus) SaveGlobalSettings(); };
         }
@@ -94,11 +91,11 @@ namespace Modding
             {
                 if (!File.Exists(SettingsPath))
                     return;
-        
+
                 Logger.APILogger.Log("Loading Global Settings");
-        
+
                 string json = File.ReadAllText(SettingsPath);
-        
+
                 var settings = new JsonSerializerSettings
                 {
                     Error = (sender, args) =>
@@ -108,9 +105,9 @@ namespace Modding
                     },
                     Converters = JsonConverterTypes.ConverterTypes
                 };
-        
-                GlobalSettings = JsonConvert.DeserializeObject<ModHooksGlobalSettings>(json, settings);
-        
+
+                GlobalSettings = JsonConvert.DeserializeObject<ModHooksGlobalSettings>(json, settings) ?? new ModHooksGlobalSettings();
+
                 Logger.APILogger.Log("Global Settings loaded successfully");
             }
             catch (Exception ex)
@@ -124,29 +121,29 @@ namespace Modding
             try
             {
                 Logger.APILogger.Log("Saving Global Settings");
-                
+
                 var settings = GlobalSettings;
-                
+
                 if (settings is null)
                     return;
-                
+
                 settings.ModEnabledSettings = new Dictionary<string, bool>();
-                
+
                 foreach (var x in ModLoader.ModInstances)
                 {
-                    if (x.Mod is ITogglableMod && x.Error is null) 
+                    if (x.Mod is ITogglableMod && x.Error is null)
                         settings.ModEnabledSettings.Add(x.Name, x.Enabled);
                 }
-                
-                if (File.Exists(SettingsPath + ".bak")) 
+
+                if (File.Exists(SettingsPath + ".bak"))
                     File.Delete(SettingsPath + ".bak");
-                
-                if (File.Exists(SettingsPath)) 
+
+                if (File.Exists(SettingsPath))
                     File.Move(SettingsPath, SettingsPath + ".bak");
-                
+
                 using FileStream fileStream = File.Create(SettingsPath);
                 using var writer = new StreamWriter(fileStream);
-                
+
                 writer.Write(JsonConvert.SerializeObject(
                     settings,
                     Formatting.Indented,
@@ -218,27 +215,27 @@ namespace Modding
         /// </summary>
         /// <remarks>N/A</remarks>
         internal static string LanguageGet(string key, string sheet)
-		{
-			string text = global::Language.Language.GetInternal(key, sheet);
-			if (ModHooks.LanguageGetHook == null)
-			{
-				return text;
-			}
-			Delegate[] invocationList = ModHooks.LanguageGetHook.GetInvocationList();
-			for (int i = 0; i < invocationList.Length; i++)
-			{
-				LanguageGetProxy languageGetProxy = (LanguageGetProxy)invocationList[i];
-				try
-				{
-					text = languageGetProxy(key, sheet, text);
-				}
-				catch (Exception message)
-				{
-					Logger.APILogger.LogError(message);
-				}
-			}
-			return text;
-		}
+        {
+            string text = global::Language.Language.GetInternal(key, sheet);
+            if (ModHooks.LanguageGetHook == null)
+            {
+                return text;
+            }
+            Delegate[] invocationList = ModHooks.LanguageGetHook.GetInvocationList();
+            for (int i = 0; i < invocationList.Length; i++)
+            {
+                LanguageGetProxy languageGetProxy = (LanguageGetProxy)invocationList[i];
+                try
+                {
+                    text = languageGetProxy(key, sheet, text);
+                }
+                catch (Exception message)
+                {
+                    Logger.APILogger.LogError(message);
+                }
+            }
+            return text;
+        }
 
         /// <summary>
         ///     Called whenever game tries to show cursor
@@ -566,50 +563,7 @@ namespace Modding
         /// <summary>
         ///     Called when anything in the game tries to set a bool in player data
         /// </summary>
-        /// <example>
-        /// <code>
-        /// public int KillCount { get; set; }
-        /// 
-        /// ModHooks.Instance.SetPlayerBoolHook += SetBool;
-        ///
-        /// /*
-        ///  * This uses the bool set to trigger a death, killing the player
-        ///  * as well as preventing them from picking up dash, which could be used
-        ///  * in something like a dashless mod.
-        ///  *
-        ///  * We are also able to use SetBool for counting things, as it is often
-        ///  * called every time sometthing happens, regardless of the value
-        ///  * this can be seen in our check for "killedMageLord", which counts the
-        ///  * number of times the player kills Soul Master with the mod on.
-        ///  */
-        /// bool SetBool(string name, bool orig) {
-        ///     switch (name) {
-        ///         case "hasDash":
-        ///             var hc = HeroController.instance;
-        ///
-        ///             // Kill the player
-        ///             hc.StartCoroutine(hc.Die());
-        ///
-        ///             // Prevent dash from being picked up
-        ///             return false;
-        ///         case "killedMageLord":
-        ///             // Just increment the counter.
-        ///             KillCount++;
-        ///
-        ///             // We could also do something like award them geo for each kill
-        ///             // And despite being a set, this would trigger on *every* kill
-        ///             HeroController.instance.AddGeo(300);
-        /// 
-        ///             // Not changing the value.
-        ///             return orig;
-        ///         default:
-        ///             return orig;
-        ///     }
-        /// }
-        /// </code>
-        /// </example>
-        /// <see cref="SetBoolProxy" />
-        /// <remarks>PlayerData.SetBool</remarks>
+
         public static event SetBoolProxy SetPlayerBoolHook;
 
         /// <summary>
@@ -646,19 +600,6 @@ namespace Modding
         /// <summary>
         ///     Called when anything in the game tries to get a bool from player data
         /// </summary>
-        /// <example>
-        /// <code>
-        /// ModHooks.GetPlayerBoolHook += GetBool;
-        ///
-        /// // In this example, we always give the player dash, and
-        /// // leave other bools as-is.
-        /// bool? GetBool(string name, bool orig) {
-        ///     return name == "canDash" ? true : orig;
-        /// }
-        /// </code>
-        /// </example>
-        /// <see cref="GetBoolProxy"/>
-        /// <remarks>PlayerData.GetBool</remarks>
         public static event GetBoolProxy GetPlayerBoolHook;
 
         /// <summary>
@@ -693,28 +634,7 @@ namespace Modding
         /// <summary>
         ///     Called when anything in the game tries to set an int in player data
         /// </summary>
-        /// <example>
-        /// <code>
-        /// ModHooks.Instance.SetPlayerIntHook += SetInt;
-        ///
-        /// int? SetInt(string name, int orig) {
-        ///      // We could do something every time the player 
-        ///      // receives or loses geo.
-        ///     if (name == "geo") {
-        ///         // Let's give the player soul if they *gain* geo
-        ///         if (PlayerData.instance.geo &lt; orig) {
-        ///             PlayerData.instance.AddMPChargeSpa(10);
-        ///         }
-        ///     }
-        ///
-        ///     // In this case, we aren't changing the value being set
-        ///     // at all, so we just leave the value as the original for everything.
-        ///     return orig;
-        /// }
-        /// </code>
-        /// </example>
-        /// <see cref="SetIntProxy"/>
-        /// <remarks>PlayerData.SetInt</remarks>
+
         public static event SetIntProxy SetPlayerIntHook;
 
         /// <summary>
@@ -753,14 +673,7 @@ namespace Modding
         /// <see cref="GetIntProxy"/>
         /// <example>
         /// <code>
-        /// ModHooks.GetPlayerIntHook += GetInt;
-        ///
-        /// // This overrides the number of charm slots we have to 999,
-        /// // effectively giving us infinite charm notches.
-        /// // We ignore any other GetInt calls.
-        /// int? GetInt(string name, int orig) {
-        ///     return name == "charmSlots" ? 999 : orig;
-        /// }
+
         /// </code>
         /// </example>
         /// <see cref="GetIntProxy"/>
@@ -2150,8 +2063,8 @@ namespace Modding
             Type type,
             bool onlyEnabled = false,
             bool allowLoadError = false
-        ) => ModLoader.ModInstanceTypeMap.TryGetValue(type, out var mod) 
-            && (!onlyEnabled || mod.Enabled) 
+        ) => ModLoader.ModInstanceTypeMap.TryGetValue(type, out var mod)
+            && (!onlyEnabled || mod.Enabled)
             && (allowLoadError || mod.Error is null)
          ? mod.Mod : null;
 
@@ -2198,7 +2111,7 @@ namespace Modding
         #endregion
 
         private static event Action _finishedLoadingModsHook;
-        
+
         /// <summary>
         /// Event invoked when mods have finished loading. If modloading has already finished, subscribers will be invoked immediately.
         /// </summary>
@@ -2207,10 +2120,10 @@ namespace Modding
             add
             {
                 _finishedLoadingModsHook += value;
-                
-                if (!ModLoader.LoadState.HasFlag(ModLoader.ModLoadState.Loaded)) 
+
+                if (!ModLoader.LoadState.HasFlag(ModLoader.ModLoadState.Loaded))
                     return;
-                
+
                 try
                 {
                     value.Invoke();
@@ -2222,7 +2135,7 @@ namespace Modding
             }
             remove => _finishedLoadingModsHook -= value;
         }
-        
+
         internal static void OnFinishedLoadingMods()
         {
             if (_finishedLoadingModsHook == null)

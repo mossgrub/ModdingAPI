@@ -30,11 +30,11 @@ namespace MonoMod.RuntimeDetour.HookGen
                     _warnedAboutIl = true;
                     Logger.APILogger.LogWarn("IL.* hooks are experimental on IL2CPP. They require HybridCLR + Dobby backend.");
                 }
-                
+
                 if (ILHookBackend.IsAvailable)
                 {
                     Logger.APILogger.Log($"Attempting IL hook via HybridCLR backend: {typeof(T).FullName} on {fullName}");
-                    
+
                     if (ILHookBackend.TryApplyILHook(method, handler, out string error))
                     {
                         Logger.APILogger.Log($"IL hook successfully applied via HybridCLR: {fullName}");
@@ -48,7 +48,7 @@ namespace MonoMod.RuntimeDetour.HookGen
                         Logger.APILogger.LogError($"IL hook via HybridCLR failed: {fullName}. Error: {error}");
                     }
                 }
-                
+
                 Logger.APILogger.LogError($"IL hook NOT SUPPORTED: {typeof(T).FullName} on {fullName}");
                 Logger.APILogger.LogError($"Reason: IL2CPP compiles C# to native code (ARM/x64). There is NO IL at runtime to manipulate.");
                 Logger.APILogger.LogError($"Alternative: Use On.* hooks instead. On.HookEndpointManager.Add<On.{method.DeclaringType?.Name}.{method.Name}>(...) ");

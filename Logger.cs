@@ -28,7 +28,7 @@ namespace Modding
         internal static void InitializeFileStream()
         {
             Debug.Log("Creating Mod Logger");
-            
+
             _logLevel = LogLevel.Debug;
 
             Directory.CreateDirectory(OldLogDir);
@@ -36,10 +36,10 @@ namespace Modding
             string current = Path.Combine(Application.persistentDataPath, "ModLog.txt");
 
             BackupLog(current, OldLogDir);
-            
+
             var fs = new FileStream(current, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
-            
-            lock (Locker) 
+
+            lock (Locker)
                 Writer = new StreamWriter(fs, Encoding.UTF8) { AutoFlush = true };
 
             File.SetCreationTimeUtc(current, DateTime.UtcNow);
@@ -47,25 +47,40 @@ namespace Modding
 
         private static void BackupLog(string path, string dir)
         {
-            if (!File.Exists(path)) 
+            if (!File.Exists(path))
                 return;
-            
+
             string time = File.GetCreationTimeUtc(path).ToString("MM dd yyyy (HH mm ss)", CultureInfo.InvariantCulture);
-            
+
             File.Move(path, Path.Combine(dir, $"ModLog {time}.txt"));
         }
 
         internal static void ClearOldModlogs()
         {
-            string oldLogDir = Path.Combine(Application.persistentDataPath, "Old ModLogs");
-            
-            APILogger.Log($"Deleting modlogs older than {ModHooks.GlobalSettings.ModlogMaxAge} days ago");
-
-            DateTime limit = DateTime.UtcNow.AddDays(-ModHooks.GlobalSettings.ModlogMaxAge);
-            
-            foreach (string file in Directory.GetFiles(oldLogDir).Where(f => File.GetCreationTimeUtc(f) < limit))
+            if (ModHooks.GlobalSettings == null)
             {
-                File.Delete(file);
+                return;
+            }
+
+            string oldLogDir = Path.Combine(Application.persistentDataPath, "Old ModLogs");
+
+            if (Directory.Exists(oldLogDir))
+            {
+                APILogger.Log($"Deleting modlogs older than {ModHooks.GlobalSettings.ModlogMaxAge} days ago");
+
+                DateTime limit = DateTime.UtcNow.AddDays(-ModHooks.GlobalSettings.ModlogMaxAge);
+
+                foreach (string file in Directory.GetFiles(oldLogDir).Where(f => File.GetCreationTimeUtc(f) < limit))
+                {
+                    try
+                    {
+                        File.Delete(file);
+                    }
+                    catch (Exception ex)
+                    {
+                        APILogger.LogWarn("Failed to delete old modlog " + file + ": " + ex.Message);
+                    }
+                }
             }
         }
 
@@ -91,13 +106,13 @@ namespace Modding
         /// <param name="level">Level of Log</param>
         public static void Log(string message, LogLevel level)
         {
-            if (_logLevel > level) 
+            if (_logLevel > level)
                 return;
-            
+
             string timeText = "[" + DateTime.Now.ToUniversalTime().ToString("HH:mm:ss") + "]:"; // uses ISO 8601
             string levelText = _shortLoggingLevel ? $"[{LogLevelExt.ToShortString(level).ToUpper()}]:" : $"[{level.ToString().ToUpper()}]:";
             string prefixText = _includeTimestamps ? timeText + levelText : levelText;
-            
+
             WriteToFile(ExpandLines(prefixText, message), level);
         }
 

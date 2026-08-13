@@ -29,16 +29,16 @@ namespace Modding
                     MouseBindingSource mbs = src as MouseBindingSource;
                     if (mbs != null)
                     {
-                       ret = new InputHandler.KeyOrMouseBinding(mbs.Control);
+                        ret = new InputHandler.KeyOrMouseBinding(mbs.Control);
                     }
                 }
-                
+
                 if (!InputHandler.KeyOrMouseBinding.IsNone(ret))
                 {
                     return ret;
                 }
             }
-            
+
             return default;
         }
 
@@ -97,7 +97,7 @@ namespace Modding
             return InputControlType.None;
         }
 
-        
+
         /// <summary>
         /// Adds a controller button binding to the player action based on a <c>InputControlType</c>.
         /// </summary>

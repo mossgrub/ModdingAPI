@@ -11,11 +11,11 @@ namespace Modding
         private static GameObject _overlayCanvas;
         private static GameObject _textPanel;
         private static Font _font;
-        
+
         private bool _enabled = true;
-        
+
         private readonly List<string> _messages = new List<string>(25);
-        
+
         private KeyCode _toggleKey = KeyCode.F10;
         private int _maxMessageCount = 25;
         private int _fontSize = 12;
@@ -66,7 +66,7 @@ namespace Modding
             GameObject background = CanvasUtil.CreateImagePanel
             (
                 _overlayCanvas,
-                CanvasUtil.NullSprite(new byte[] {0x80, 0x00, 0x00, 0x00}),
+                CanvasUtil.NullSprite(new byte[] { 0x80, 0x00, 0x00, 0x00 }),
                 new CanvasUtil.RectData(new Vector2(500, 800), Vector2.zero, Vector2.zero, Vector2.zero, Vector2.zero)
             );
 
@@ -86,39 +86,39 @@ namespace Modding
         private void LoadSettings()
         {
             InGameConsoleSettings settings = ModHooks.GlobalSettings.ConsoleSettings;
-            
+
             _toggleKey = settings.ToggleHotkey;
-            
+
             if (_toggleKey == KeyCode.Escape)
             {
                 Logger.APILogger.LogError("Esc cannot be used as hotkey for console togging");
-                
+
                 _toggleKey = settings.ToggleHotkey = KeyCode.F10;
             }
 
             _maxMessageCount = settings.MaxMessageCount;
-            
+
             if (_maxMessageCount <= 0)
             {
                 Logger.APILogger.LogError($"Specified max console message count {_maxMessageCount} is invalid");
-                
+
                 _maxMessageCount = settings.MaxMessageCount = 24;
             }
 
             _fontSize = settings.FontSize;
-            
+
             if (_fontSize <= 0)
             {
                 Logger.APILogger.LogError($"Specified console font size {_fontSize} is invalid");
-                
+
                 _fontSize = settings.FontSize = 12;
             }
 
             string userFont = settings.Font;
-            
-            if (string.IsNullOrEmpty(userFont)) 
+
+            if (string.IsNullOrEmpty(userFont))
                 return;
-            
+
             _font = Font.CreateDynamicFontFromOSFont(userFont, _fontSize);
 
             if (_font == null)
@@ -146,7 +146,7 @@ namespace Modding
         public void AddText(string message, LogLevel level)
         {
             IEnumerable<string> chunks = Chunks(message, MSG_LENGTH);
-            
+
             string color = $"<color={ModHooks.GlobalSettings.ConsoleSettings.DefaultColor}>";
 
             if (ModHooks.GlobalSettings.ConsoleSettings.UseLogColors)
@@ -176,10 +176,10 @@ namespace Modding
             }
         }
 
-        private static IEnumerable<string> Chunks(string str, int maxChunkSize) 
+        private static IEnumerable<string> Chunks(string str, int maxChunkSize)
         {
-            for (int i = 0; i < str.Length; i += maxChunkSize) 
-                yield return str.Substring(i, Math.Min(maxChunkSize, str.Length-i));
+            for (int i = 0; i < str.Length; i += maxChunkSize)
+                yield return str.Substring(i, Math.Min(maxChunkSize, str.Length - i));
         }
     }
 }

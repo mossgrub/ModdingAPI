@@ -31,7 +31,7 @@ namespace Modding
             }
 
             string fileName = Path.GetFileNameWithoutExtension(path);
-            
+
             if (_loadedAssemblies.TryGetValue(fileName, out Assembly cachedAssembly))
             {
                 return cachedAssembly;

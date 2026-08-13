@@ -87,7 +87,15 @@ namespace Modding
             if (method == null) return IntPtr.Zero;
             try
             {
-                RuntimeHelpers.PrepareMethod(method.MethodHandle);
+                try
+                {
+                    RuntimeHelpers.PrepareMethod(method.MethodHandle);
+                }
+                catch
+                {
+                    // fall through to GetFunctionPointer
+                }
+
                 return method.MethodHandle.GetFunctionPointer();
             }
             catch (Exception ex)
@@ -166,17 +174,38 @@ namespace Modding
             return GetDelegateTypeForMethod(method, out _);
         }
 
-        private sealed class Slot0 { } private sealed class Slot1 { } private sealed class Slot2 { }
-        private sealed class Slot3 { } private sealed class Slot4 { } private sealed class Slot5 { }
-        private sealed class Slot6 { } private sealed class Slot7 { } private sealed class Slot8 { }
-        private sealed class Slot9 { } private sealed class Slot10 { } private sealed class Slot11 { }
-        private sealed class Slot12 { } private sealed class Slot13 { } private sealed class Slot14 { }
-        private sealed class Slot15 { } private sealed class Slot16 { } private sealed class Slot17 { }
-        private sealed class Slot18 { } private sealed class Slot19 { } private sealed class Slot20 { }
-        private sealed class Slot21 { } private sealed class Slot22 { } private sealed class Slot23 { }
-        private sealed class Slot24 { } private sealed class Slot25 { } private sealed class Slot26 { }
-        private sealed class Slot27 { } private sealed class Slot28 { } private sealed class Slot29 { }
-        private sealed class Slot30 { } private sealed class Slot31 { }
+        private sealed class Slot0 { }
+        private sealed class Slot1 { }
+        private sealed class Slot2 { }
+        private sealed class Slot3 { }
+        private sealed class Slot4 { }
+        private sealed class Slot5 { }
+        private sealed class Slot6 { }
+        private sealed class Slot7 { }
+        private sealed class Slot8 { }
+        private sealed class Slot9 { }
+        private sealed class Slot10 { }
+        private sealed class Slot11 { }
+        private sealed class Slot12 { }
+        private sealed class Slot13 { }
+        private sealed class Slot14 { }
+        private sealed class Slot15 { }
+        private sealed class Slot16 { }
+        private sealed class Slot17 { }
+        private sealed class Slot18 { }
+        private sealed class Slot19 { }
+        private sealed class Slot20 { }
+        private sealed class Slot21 { }
+        private sealed class Slot22 { }
+        private sealed class Slot23 { }
+        private sealed class Slot24 { }
+        private sealed class Slot25 { }
+        private sealed class Slot26 { }
+        private sealed class Slot27 { }
+        private sealed class Slot28 { }
+        private sealed class Slot29 { }
+        private sealed class Slot30 { }
+        private sealed class Slot31 { }
 
         private static readonly Type[] SlotTypes =
         {
