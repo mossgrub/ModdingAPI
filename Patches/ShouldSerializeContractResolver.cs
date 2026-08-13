@@ -11,7 +11,7 @@ namespace Modding.Patches
         /// Instance to cache reflection calls.
         /// </summary>
         public static readonly ShouldSerializeContractResolver Instance = new ShouldSerializeContractResolver();
-        
+
         /// <inheritdoc />
         protected override JsonProperty CreateProperty(MemberInfo member, MemberSerialization memberSerialization)
         {
@@ -19,7 +19,7 @@ namespace Modding.Patches
 
             if (member?.DeclaringType?.Assembly.FullName.StartsWith("UnityEngine") ?? false)
                 prop.Ignored = true;
-            
+
             return prop;
         }
     }
