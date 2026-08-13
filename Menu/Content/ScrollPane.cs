@@ -97,7 +97,7 @@ namespace Modding.Menu
             scrollRect.movementType = ScrollRect.MovementType.Clamped;
             scrollRect.verticalScrollbar = scroll;
             // Auto hide if nothing to scroll
-            scrollRect.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHideAndExpandViewport; 
+            scrollRect.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHideAndExpandViewport;
 
             // CanvasRenderer
             scrollPane.AddComponent<CanvasRenderer>();
@@ -186,25 +186,25 @@ namespace Modding.Menu
             var handleRt = handle.AddComponent<RectTransform>();
             handleRt.sizeDelta = new Vector2(76f, 0f);
             handleRt.pivot = new Vector2(0.5f, 0.5f);
-            handleRt.anchorMin = new Vector2(0.0f, 0f); 
+            handleRt.anchorMin = new Vector2(0.0f, 0f);
             handleRt.anchorMax = new Vector2(1.0f, 1f);
-            handleRt.anchoredPosition = new Vector2(-1f, 0f); 
+            handleRt.anchoredPosition = new Vector2(-1f, 0f);
             // CanvasRenderer
             handle.AddComponent<CanvasRenderer>();
             // Post Component Config
             scrollbarComp.handleRect = handleRt;
 
             // TopFleur 
-            var handleSprite = new GameObject("TopFleur"); 
+            var handleSprite = new GameObject("TopFleur");
             GameObject.DontDestroyOnLoad(handleSprite);
             handleSprite.transform.SetParent(handle.transform, false);
             // RectTransform
             var handleSpriteRt = handleSprite.AddComponent<RectTransform>();
-            handleSpriteRt.sizeDelta = new Vector2(37.8f, 68.5f); 
+            handleSpriteRt.sizeDelta = new Vector2(37.8f, 68.5f);
             handleSpriteRt.pivot = new Vector2(0.5f, 0.8f);
             handleSpriteRt.anchorMin = new Vector2(0.5f, 1f);
             handleSpriteRt.anchorMax = new Vector2(0.5f, 1f);
-            handleSpriteRt.anchoredPosition = new Vector2(0.8f, 0f); 
+            handleSpriteRt.anchoredPosition = new Vector2(0.8f, 0f);
             handleSpriteRt.localScale = new Vector3(2f, 2f, 1f);
             // CanvasRenderer
             handleSprite.AddComponent<CanvasRenderer>();

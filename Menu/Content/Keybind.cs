@@ -185,7 +185,7 @@ namespace Modding.Menu
             mappableKey = mapKey;
             return content;
         }
-    /// <summary>
+        /// <summary>
         /// Creates a buttonBind menu item.
         /// </summary>
         /// <param name="content">The <c>ContentArea</c> to put the buttonBind item in.</param>
@@ -342,14 +342,14 @@ namespace Modding.Menu
             GameObject.DontDestroyOnLoad(throbber);
             throbber.transform.SetParent(keymap.transform, false);
             mapButton.listeningThrobber = throbber.AddComponent<Throbber>();
-            ReflectionHelper.SetField( mapButton.listeningThrobber,"sprites",new Sprite[0]);
-            
+            ReflectionHelper.SetField(mapButton.listeningThrobber, "sprites", new Sprite[0]);
+
             mapButton.GetBindingPublic();
             mapButton.ShowCurrentBinding();
             mappableControllerButton = mapButton;
             return content;
         }
-    
+
     }
 
     namespace Config
