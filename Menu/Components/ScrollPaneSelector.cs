@@ -41,9 +41,9 @@ namespace Modding.Menu.Components
             var bottom = thisToMask.MultiplyPoint(new Vector3(0, rt.rect.yMax, 0)).y + bottomPad;
             var top = thisToMask.MultiplyPoint(new Vector3(0, rt.rect.yMin, 0)).y + topPad;
 
-            var pos = this.PaneRect.anchoredPosition.y + (this.MaskRect.rect.yMax - bottom)*2;
-            this.Scrollbar.value =  (this.PaneRect.rect.height - this.MaskRect.rect.height) / pos;
-            
+            var pos = this.PaneRect.anchoredPosition.y + (this.MaskRect.rect.yMax - bottom) * 2;
+            this.Scrollbar.value = (this.PaneRect.rect.height - this.MaskRect.rect.height) / pos;
+
         }
     }
 }
