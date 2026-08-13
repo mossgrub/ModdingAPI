@@ -98,13 +98,18 @@ namespace Modding.Converters
                 if (filter(ac.Name))
                 {
                     writer.WritePropertyName(ac.Name);
-                     var keyOrMouse = ac.GetKeyOrMouseBinding();
-                     var controllerButton = ac.GetControllerButtonBinding();
-                    if(keyOrMouse.Key != Key.None){
+                    var keyOrMouse = ac.GetKeyOrMouseBinding();
+                    var controllerButton = ac.GetControllerButtonBinding();
+                    if (keyOrMouse.Key != Key.None)
+                    {
                         writer.WriteValue(keyOrMouse.ToString());
-                    } else if(controllerButton != InputControlType.None) {
-                        writer.WriteValue(controllerButton.ToString()); 
-                    } else {
+                    }
+                    else if (controllerButton != InputControlType.None)
+                    {
+                        writer.WriteValue(controllerButton.ToString());
+                    }
+                    else
+                    {
                         writer.WriteValue("None");
                     }
                 }

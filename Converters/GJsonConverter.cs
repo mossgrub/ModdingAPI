@@ -23,7 +23,7 @@ namespace Modding.Converters
                 reader.Read();
                 while (reader.TokenType == JsonToken.PropertyName)
                 {
-                    string name = (string) reader.Value;
+                    string name = (string)reader.Value;
                     // Value
                     reader.Read();
                     token.Add(name, reader.Value);
@@ -39,7 +39,7 @@ namespace Modding.Converters
         public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
         {
             writer.WriteStartObject();
-            WriteJson(writer, (TClass) value);
+            WriteJson(writer, (TClass)value);
             writer.WriteEndObject();
         }
 
@@ -51,7 +51,7 @@ namespace Modding.Converters
         /// <returns></returns>
         [PublicAPI]
         public abstract TClass ReadJson(Dictionary<string, object> token, object existingValue);
-        
+
         /// <summary>
         /// Write value into token
         /// </summary>
