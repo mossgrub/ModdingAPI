@@ -5,12 +5,12 @@ using Newtonsoft.Json.Serialization;
 namespace Modding.Patches
 {
     /// <inheritdoc />
-    public class ShouldSerializeContractResolver : DefaultContractResolver
+    public class ShouldSerializeContractResolver : AotContractResolver
     {
         /// <summary>
         /// Instance to cache reflection calls.
         /// </summary>
-        public static readonly ShouldSerializeContractResolver Instance = new ShouldSerializeContractResolver();
+        public static new readonly ShouldSerializeContractResolver Instance = new ShouldSerializeContractResolver();
 
         /// <inheritdoc />
         protected override JsonProperty CreateProperty(MemberInfo member, MemberSerialization memberSerialization)
