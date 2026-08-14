@@ -213,7 +213,7 @@ namespace Modding
             }
         }
 
-        private static bool IsMonoModAssembly(string assemblyName)
+        internal static bool IsMonoModAssembly(string assemblyName)
         {
             return assemblyName == "MonoMod.RuntimeDetour" ||
                    assemblyName == "MonoMod.Common" ||

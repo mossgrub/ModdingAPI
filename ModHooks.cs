@@ -52,6 +52,21 @@ namespace Modding
 
         static ModHooks()
         {
+            try
+            {
+                if (JsonConvert.DefaultSettings == null)
+                {
+                    JsonConvert.DefaultSettings = () => new JsonSerializerSettings
+                    {
+                        ContractResolver = AotContractResolver.Instance
+                    };
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.APILogger.LogWarn("Failed to configure JsonConvert.DefaultSettings: " + e.Message);
+            }
+
             GameVersion gameVersion;
             try
             {
@@ -103,6 +118,7 @@ namespace Modding
                         Logger.APILogger.LogError($"Json error: {args.ErrorContext.Error.Message}");
                         args.ErrorContext.Handled = true;
                     },
+                    ContractResolver = ShouldSerializeContractResolver.Instance,
                     Converters = JsonConverterTypes.ConverterTypes
                 };
 
@@ -310,8 +326,6 @@ namespace Modding
         /// </summary>
         internal static GameObject OnObjectPoolSpawn(GameObject go)
         {
-            // No log because it's too spammy
-
             if (ObjectPoolSpawnHook == null)
             {
                 return go;

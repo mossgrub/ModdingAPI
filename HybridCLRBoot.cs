@@ -75,7 +75,7 @@ namespace Modding
                     string fileName = Path.GetFileName(name);
                     if (fileName == "Assembly-CSharp.dll")
                     {
-                        Debug.Log($"Skipping Assembly-CSharp.dll (AOT only)");
+                        Debug.Log($"Skipping Assembly-CSharp.dll");
                         continue;
                     }
 

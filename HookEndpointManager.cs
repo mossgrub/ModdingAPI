@@ -28,7 +28,6 @@ namespace MonoMod.RuntimeDetour.HookGen
                 if (!_warnedAboutIl)
                 {
                     _warnedAboutIl = true;
-                    Logger.APILogger.LogWarn("IL.* hooks are experimental on IL2CPP. They require HybridCLR + Dobby backend.");
                 }
 
                 if (ILHookBackend.IsAvailable)
@@ -49,22 +48,43 @@ namespace MonoMod.RuntimeDetour.HookGen
                     }
                 }
 
-                Logger.APILogger.LogError($"IL hook NOT SUPPORTED: {typeof(T).FullName} on {fullName}");
-                Logger.APILogger.LogError($"Reason: IL2CPP compiles C# to native code (ARM/x64). There is NO IL at runtime to manipulate.");
-                Logger.APILogger.LogError($"Alternative: Use On.* hooks instead. On.HookEndpointManager.Add<On.{method.DeclaringType?.Name}.{method.Name}>(...) ");
+                Logger.APILogger.LogError($"IL hook not supported: {typeof(T).FullName} on {fullName}");
                 return;
             }
 
             Logger.APILogger.LogDebug($"Registering On hook: {typeof(T).FullName} on {fullName}");
 
             var registration = Registrations.GetOrAdd(method, m => new HookRegistration(m));
+
             registration.AddHandler(handler);
 
-            if (registration.DetourApplied) return;
+            if (registration.DetourApplied)
+            {
+                Logger.APILogger.LogDebug($"On hook already applied for {fullName}; additional handler tracked (chain rebuild TBI).");
+                return;
+            }
 
             try
             {
+                if (!DetourBridge.IsAvailable)
+                {
+                    Logger.APILogger.LogWarn($"Dobby is not available; On hook not applied for {fullName}.");
+                    registration.RemoveHandler(handler);
+                    if (registration.IsEmpty) Registrations.TryRemove(method, out _);
+                    return;
+                }
+
+                if (!DetourBridge.TryCreateOrigDetour((MethodInfo)method, handler, out Delegate orig, out string error))
+                {
+                    Logger.APILogger.LogWarn($"Failed to apply On hook for {fullName}: {error}");
+                    registration.RemoveHandler(handler);
+                    if (registration.IsEmpty) Registrations.TryRemove(method, out _);
+                    return;
+                }
+
+                registration.SetOrig(orig);
                 registration.DetourApplied = true;
+                Logger.APILogger.Log($"Applied On hook: {fullName} (orig trampoline acquired)");
             }
             catch (Exception ex)
             {
@@ -74,6 +94,7 @@ namespace MonoMod.RuntimeDetour.HookGen
                 {
                     Registrations.TryRemove(method, out _);
                 }
+                registration.DetourApplied = false;
             }
         }
 
@@ -265,6 +286,8 @@ namespace MonoMod.RuntimeDetour.HookGen
         private System.Collections.Generic.List<Delegate> _handlers = new System.Collections.Generic.List<Delegate>();
         public bool DetourApplied { get; set; }
         public Delegate Orig { get; private set; }
+
+        internal void SetOrig(Delegate orig) => Orig = orig;
 
         public HookRegistration(MethodBase method)
         {

@@ -100,6 +100,12 @@ namespace Modding
 
                 foreach (KeyValuePair<string, byte[]> kvp in hotUpdateDlls)
                 {
+                    if (AssemblyLoader.IsMonoModAssembly(Path.GetFileNameWithoutExtension(kvp.Key)))
+                    {
+                        Logger.APILogger.Log($"Skipping hot-update load of {kvp.Key} (provided by AOT shim in Assembly-CSharp).");
+                        continue;
+                    }
+
                     try
                     {
                         Assembly asm = Assembly.Load(kvp.Value);
