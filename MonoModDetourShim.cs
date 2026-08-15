@@ -77,7 +77,7 @@ namespace MonoMod.RuntimeDetour
             }
             else
             {
-                Logger.APILogger.LogWarn("Dobby not available. Detour for " + _original.Name + " will not be applied on IL2CPP.");
+                Logger.APILogger.LogWarn("Detour for " + _original.Name + " will not be applied on IL2CPP.");
             }
 #else
             ApplyMonoDetour();

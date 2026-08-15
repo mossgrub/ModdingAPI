@@ -123,7 +123,7 @@ namespace Modding
 
 				if (!madeProgress)
 				{
-					Logger.APILogger.LogWarn($"No assemblies could be loaded in pass {pass}; stopping dependency retry (still pending: {stillPending.Count}).");
+					Logger.APILogger.LogWarn($"No assemblies could be loaded in pass {pass}. Still pending: {stillPending.Count}).");
 					pending = stillPending;
 					break;
 				}
@@ -132,16 +132,13 @@ namespace Modding
 					break;
 
 				pending = stillPending;
-				Logger.APILogger.LogDebug($"Dependency retry pass {pass + 1}: {pending.Count} assemblies still pending.");
 			}
 
 			foreach (string path in pending)
 			{
 				lastErrors.TryGetValue(path, out string err);
-				Logger.APILogger.LogError($"Failed to load assembly (after dependency retries): {path} : {err}");
 			}
 
-			Logger.APILogger.LogDebug($"Loaded {result.Count}/{paths.Length} assemblies (after dependency retry).");
 			return result;
 		}
 
@@ -163,7 +160,7 @@ namespace Modding
 		{
 			if (_modLoadInitStarted)
 			{
-				Logger.APILogger.LogWarn("LoadModsInit already started; skipping duplicate initialization.");
+				Logger.APILogger.LogWarn("LoadModsInit already started. Skipping duplicate initialization.");
 				yield break;
 			}
 			_modLoadInitStarted = true;
@@ -194,13 +191,22 @@ namespace Modding
 			}
 			catch (Exception ex)
 			{
-				Logger.APILogger.LogWarn($"DetourBridge.Initialize failed (continuing boot): {ex.Message}");
+				Logger.APILogger.LogWarn($"DetourBridge.Initialize failed: {ex.Message}");
+			}
+
+			try
+			{
+				NativeCompat.Install();
+			}
+			catch (Exception ex)
+			{
+				Logger.APILogger.LogWarn($"NativeCompat.Install failed: {ex.Message}");
 			}
 
 			global::ModManagerSettings.Load();
 			if (global::ModManagerSettings.GameVanillaMode)
 			{
-				Logger.APILogger.Log("Game vanilla mode enabled.");
+				Logger.APILogger.Log("Game vanilla mode enabled");
 				LoadState |= ModLoadState.Loaded;
 				UnityEngine.Object.Destroy(coroutineHolder);
 				yield break;
@@ -212,10 +218,8 @@ namespace Modding
 
 #if UNITY_EDITOR
                 text2 = @"D:\SteamLibrary\steamapps\common\Hollow Knight\hollow_knight_Data\Managed\Mods";
-                Logger.APILogger.Log("Loading mods from: " + text2);
 #elif UNITY_ANDROID
                 text2 = Path.Combine(Application.persistentDataPath, "Mods");
-                Logger.APILogger.Log("Loading mods from: " + text2);
 #else
 			string text = SystemInfo.operatingSystemFamily switch
 			{
@@ -259,7 +263,7 @@ namespace Modding
 			}
 			catch (Exception exClear)
 			{
-				Logger.APILogger.LogWarn("ClearOldModlogs failed (continuing boot): " + exClear.Message);
+				Logger.APILogger.LogWarn("ClearOldModlogs failed: " + exClear.Message);
 			}
 			Logger.APILogger.LogDebug("Loading assemblies and constructing mods");
 			string[] files = Directory.GetDirectories(text2).Except(new string[1] { Path.Combine(text2, "Disabled") }).SelectMany((string d) => Directory.GetFiles(d, "*.dll"))
@@ -270,7 +274,7 @@ namespace Modding
 			{
 				if (item == null)
 				{
-					Logger.APILogger.LogWarn("Skipping null assembly (failed to load).");
+					Logger.APILogger.LogWarn("Skipping null assembly.");
 					continue;
 				}
 				Logger.APILogger.LogDebug("Loading mods in assembly `" + item.FullName + "`");

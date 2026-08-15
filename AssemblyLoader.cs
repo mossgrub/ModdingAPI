@@ -50,6 +50,7 @@ namespace Modding
                 {
                     _loadedAssemblies[fileName] = asm;
                     _loadedAssemblies[asm.GetName().Name] = asm;
+                    NativeCompat.AssemblyLocations[asm] = path;
                 }
                 return asm;
             }

@@ -62,7 +62,6 @@ namespace Modding
                 }
 
                 _dobbyAvailable = true;
-                Logger.APILogger.Log("Dobby available.");
             }
             catch (DllNotFoundException)
             {
@@ -410,7 +409,7 @@ namespace Modding
         {
             if (!_dobbyAvailable)
             {
-                Logger.APILogger.LogWarn("Cannot create detour - Dobby not available.");
+                Logger.APILogger.LogWarn("Cannot create detour.");
                 return null;
             }
             if (targetMethod == null) throw new ArgumentNullException(nameof(targetMethod));
