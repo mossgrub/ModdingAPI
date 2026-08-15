@@ -90,7 +90,7 @@ namespace Modding
 			}
 			yield return CleanUpPreloading();
 			UnmuteAllAudio();
-			Logger.APILogger($"Finished preloading in {stopwatch.ElapsedMilliseconds / 1000:F2}s");
+			Logger.APILogger.Log($"Finished preloading in {stopwatch.ElapsedMilliseconds / 1000:F2}s");
 		}
 
 		private static void MuteAllAudio()
