@@ -267,5 +267,38 @@ namespace Modding
                 return string.Empty;
             }
         }
+
+        public static bool TryGetAssemblyPath(Assembly asm, out string path)
+        {
+            if (asm == null)
+            {
+                path = null;
+                return false;
+            }
+
+            if (AssemblyLocations.TryGetValue(asm, out path) && !string.IsNullOrEmpty(path))
+            {
+                return true;
+            }
+
+            string fallback = asm.Location;
+            if (!string.IsNullOrEmpty(fallback))
+            {
+                path = fallback;
+                AssemblyLocations[asm] = fallback;
+                return true;
+            }
+
+            path = null;
+            return false;
+        }
+
+        public static void RegisterAssemblyPath(Assembly asm, string path)
+        {
+            if (asm != null && !string.IsNullOrEmpty(path))
+            {
+                AssemblyLocations[asm] = path;
+            }
+        }
     }
 }

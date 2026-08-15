@@ -54,19 +54,36 @@ namespace Modding
                 MethodInfo replM = typeof(DetourBridge).GetMethod(nameof(ProbeReplacement), BindingFlags.NonPublic | BindingFlags.Static);
                 IntPtr ta = GetNativeMethodAddress(targetM);
                 IntPtr ra = GetNativeMethodAddress(replM);
-                if (ta != IntPtr.Zero && ra != IntPtr.Zero)
+
+                Logger.APILogger.Log($"Dobby probe: native addresses ta=0x{ta.ToInt64():X} ra=0x{ra.ToInt64():X}");
+
+                _dobbyAvailable = ta != IntPtr.Zero && ra != IntPtr.Zero;
+                if (!_dobbyAvailable)
+                {
+                    Logger.APILogger.LogWarn(
+                        "Dobby probe: cannot obtain native method addresses (GetFunctionPointer returned 0). " +
+                        "Native hooks will not be applied. This usually means the targets run under the HybridCLR interpreter.");
+                    return false;
+                }
+
+                try
                 {
                     IntPtr tp;
                     DobbyHookNative(ta, ra, out tp);
                     DobbyUnhookNative(ta);
+                    _dobbyAvailable = true;
+                    Logger.APILogger.Log("Dobby available.");
                 }
-
-                _dobbyAvailable = true;
-            }
-            catch (DllNotFoundException)
-            {
-                Logger.APILogger.LogWarn("Dobby library not found.");
-                _dobbyAvailable = false;
+                catch (DllNotFoundException)
+                {
+                    Logger.APILogger.LogWarn("Dobby library not found.");
+                    _dobbyAvailable = false;
+                }
+                catch (Exception ex)
+                {
+                    Logger.APILogger.LogWarn("Dobby probe hook failed: " + ex.Message);
+                    _dobbyAvailable = true;
+                }
             }
             catch (Exception ex)
             {
@@ -95,7 +112,14 @@ namespace Modding
                     // fall through to GetFunctionPointer
                 }
 
-                return method.MethodHandle.GetFunctionPointer();
+                IntPtr fn = method.MethodHandle.GetFunctionPointer();
+                if (fn == IntPtr.Zero)
+                {
+                    Logger.APILogger.LogDebug(
+                        "GetFunctionPointer returned 0 for " + method.DeclaringType?.Name + "." + method.Name +
+                        " (method runs under the HybridCLR interpreter / is not AOT-native, so it cannot be Dobby-hooked).");
+                }
+                return fn;
             }
             catch (Exception ex)
             {

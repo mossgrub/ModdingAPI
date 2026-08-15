@@ -50,7 +50,7 @@ namespace Modding
 
 			if (Application.platform == RuntimePlatform.Android)
 			{
-				Logger.APILogger.LogWarn("Android detected: Changing to full scene loads!");
+				Logger.APILogger.LogWarn("Android detected: Changing to full scene loads");
 				preloadMode = PreloadMode.FullScene;
 			}
 			else if (preloadMode != PreloadMode.FullScene)
@@ -61,7 +61,7 @@ namespace Modding
 				}
 				catch (DllNotFoundException)
 				{
-					Logger.APILogger.LogWarn("UnitySceneRepacker failed: Changing to full scene loads!");
+					Logger.APILogger.LogWarn("UnitySceneRepacker failed: Changing to full scene loads");
 					preloadMode = PreloadMode.FullScene;
 				}
 			}
@@ -347,7 +347,7 @@ namespace Modding
 
 		private IEnumerator CleanUpPreloading()
 		{
-			Logger.APILogger.LogDebug("Preload done: Returning to main menu!");
+			Logger.APILogger.LogDebug("Preload done: Returning to main menu");
 			ModLoader.LoadState |= ModLoader.ModLoadState.Preloaded;
 			yield return USceneManager.LoadSceneAsync("Quit_To_Menu");
 			while (USceneManager.GetActiveScene().name != "Menu_Title")
