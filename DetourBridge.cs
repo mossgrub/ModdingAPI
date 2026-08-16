@@ -60,9 +60,6 @@ namespace Modding
                 _dobbyAvailable = ta != IntPtr.Zero && ra != IntPtr.Zero;
                 if (!_dobbyAvailable)
                 {
-                    Logger.APILogger.LogWarn(
-                        "Dobby probe: cannot obtain native method addresses (GetFunctionPointer returned 0). " +
-                        "Native hooks will not be applied. This usually means the targets run under the HybridCLR interpreter.");
                     return false;
                 }
 
@@ -103,29 +100,37 @@ namespace Modding
             if (method == null) return IntPtr.Zero;
             try
             {
-                try
-                {
-                    RuntimeHelpers.PrepareMethod(method.MethodHandle);
-                }
-                catch
-                {
-                    // fall through to GetFunctionPointer
-                }
-
                 IntPtr fn = method.MethodHandle.GetFunctionPointer();
-                if (fn == IntPtr.Zero)
+                if (fn != IntPtr.Zero)
                 {
-                    Logger.APILogger.LogDebug(
-                        "GetFunctionPointer returned 0 for " + method.DeclaringType?.Name + "." + method.Name +
-                        " (method runs under the HybridCLR interpreter / is not AOT-native, so it cannot be Dobby-hooked).");
+                    return fn;
                 }
-                return fn;
             }
             catch (Exception ex)
             {
-                Logger.APILogger.LogWarn("Could not get native address for " + method.Name + ": " + ex.Message);
-                return IntPtr.Zero;
+                Logger.APILogger.LogDebug("GetFunctionPointer threw for " + method.Name + ": " + ex.Message);
             }
+
+            try
+            {
+                IntPtr ptr = Il2CppResolver.TryGetMethodPointer(method);
+                if (ptr != IntPtr.Zero)
+                {
+                    Logger.APILogger.LogDebug(
+                        "IL2CPP resolver returned native address 0x" + ptr.ToInt64().ToString("X") +
+                        " for " + method.DeclaringType?.Name + "." + method.Name);
+                    return ptr;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogDebug("IL2CPP method resolver failed for " + method.Name + ": " + ex.Message);
+            }
+
+            Logger.APILogger.LogDebug(
+                "Could not obtain a native address for " + method.DeclaringType?.Name + "." + method.Name +
+                " (GetFunctionPointer is 0 and il2cpp exports are unavailable in this build).");
+            return IntPtr.Zero;
         }
         public delegate void DetourAction();
         public delegate void DetourAction<A0>(A0 a0);
