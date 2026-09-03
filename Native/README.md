@@ -1,2 +1,2 @@
 # Modding Native
-Hollow Knight Mobile Native helper to generate bridge libraries.
+Hollow Knight Mobile Modding Native helper to generate bridge libraries.
