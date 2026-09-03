@@ -4,7 +4,6 @@ using Newtonsoft.Json.Serialization;
 
 namespace Modding.Patches
 {
-    /// <inheritdoc />
     public class ShouldSerializeContractResolver : AotContractResolver
     {
         /// <summary>
@@ -12,7 +11,6 @@ namespace Modding.Patches
         /// </summary>
         public static new readonly ShouldSerializeContractResolver Instance = new ShouldSerializeContractResolver();
 
-        /// <inheritdoc />
         protected override JsonProperty CreateProperty(MemberInfo member, MemberSerialization memberSerialization)
         {
             JsonProperty prop = base.CreateProperty(member, memberSerialization);
