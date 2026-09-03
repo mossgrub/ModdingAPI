@@ -15,6 +15,14 @@ if (Test-Path $cecilPath) {
     $cecil = [System.Reflection.Assembly]::LoadFrom($cecilPath)
 }
 
+$resolver = New-Object Mono.Cecil.DefaultAssemblyResolver
+$resolver.AddSearchDirectory((Join-Path $projectRoot 'Assets\Plugins'))
+if (Test-Path (Join-Path $projectRoot 'Library\ScriptAssemblies')) {
+    $resolver.AddSearchDirectory((Join-Path $projectRoot 'Library\ScriptAssemblies'))
+}
+$readerParams = New-Object Mono.Cecil.ReaderParameters
+$readerParams.AssemblyResolver = $resolver
+
 function Split-GenericArgs([string]$s) {
     $result = New-Object System.Collections.Generic.List[string]
     $depth = 0; $cur = ''
@@ -141,12 +149,51 @@ function Is-AssemblyType($td) {
     return $td.FullName -eq 'System.Reflection.Assembly'
 }
 
+function Is-SafeBlittableType($pt) {
+    if ($null -eq $pt) { return $false }
+    if (Has-UnboundGeneric $pt) { return $false }
+    
+    $isValueType = $false
+    try {
+        $isValueType = $pt.IsValueType
+    } catch {
+        return $false
+    }
+    
+    if (-not $isValueType) { return $true }
+    
+    try {
+        if ($pt.IsEnum) { return $true }
+    } catch {}
+    
+    $fullName = $pt.FullName
+    $primitiveValueTypes = @(
+        'System.Boolean', 'System.Byte', 'System.SByte', 'System.Int16', 'System.UInt16',
+        'System.Int32', 'System.UInt32', 'System.Int64', 'System.UInt64',
+        'System.Single', 'System.Double', 'System.Char', 'System.IntPtr', 'System.UIntPtr',
+        'bool', 'byte', 'sbyte', 'short', 'ushort', 'int', 'uint', 'long', 'ulong',
+        'float', 'double', 'char', 'IntPtr', 'UIntPtr'
+    )
+    if ($primitiveValueTypes -contains $fullName) { return $true }
+    
+    $allowedStructs = @(
+        'UnityEngine.Vector2', 'UnityEngine.Vector3', 'UnityEngine.Vector4',
+        'UnityEngine.Quaternion', 'UnityEngine.Color', 'UnityEngine.Color32',
+        'UnityEngine.Rect', 'UnityEngine.Bounds', 'UnityEngine.Matrix4x4',
+        'GlobalEnums.CollisionSide', 'HitInstance', 'DieCause', 'AttackTypes'
+    )
+    if ($allowedStructs -contains $fullName) { return $true }
+    
+    return $false
+}
+
 $sigCounts = @{}
 $sigData = @{}
 $skippedByref = 0
 $skippedArity = 0
 $skippedUnbound = 0
 $skippedAssembly = 0
+$skippedComplexStruct = 0
 $total = 0
 $extraSeq = 0
 
@@ -197,7 +244,7 @@ foreach ($path in $mmhookPaths) {
         Write-Warning "MMHOOK missing: $path"
         continue 
     }
-    $asm = [Mono.Cecil.AssemblyDefinition]::ReadAssembly($path)
+    $asm = [Mono.Cecil.AssemblyDefinition]::ReadAssembly($path, $readerParams)
     
     foreach ($type in $asm.MainModule.Types) {
         if (-not $type.FullName.StartsWith('On.')) { continue }
@@ -216,6 +263,7 @@ foreach ($path in $mmhookPaths) {
                 if ($pt.IsByReference) { $skippedByref++; $ok = $false; break }
                 if (Has-UnboundGeneric $pt) { $skippedUnbound++; $ok = $false; break }
                 if (Is-AssemblyType $pt) { $skippedAssembly++; $ok = $false; break }
+                if (-not (Is-SafeBlittableType $pt)) { $skippedComplexStruct++; $ok = $false; break }
                 
                 $csType = Convert-Type $pt.FullName
                 $paramCs += $csType
@@ -227,6 +275,9 @@ foreach ($path in $mmhookPaths) {
             if (-not $ok) { continue }
             if (Is-AssemblyType $invoke.ReturnType) { $skippedAssembly++; continue }
             if (Has-UnboundGeneric $invoke.ReturnType) { $skippedUnbound++; continue }
+            if ($invoke.ReturnType.FullName -ne 'System.Void' -and $invoke.ReturnType.FullName -ne 'void') {
+                if (-not (Is-SafeBlittableType $invoke.ReturnType)) { $skippedComplexStruct++; continue }
+            }
             if ($paramCs.Count -gt 6) { $skippedArity++; continue }
             
             $retPt = $invoke.ReturnType
@@ -253,6 +304,7 @@ foreach ($path in $mmhookPaths) {
     }
 }
 $sorted = $sigCounts.GetEnumerator() | Sort-Object Value -Descending
+$allEntries = @($sorted)
 
 $sb = New-Object System.Text.StringBuilder
 [void]$sb.AppendLine('// Auto-Generated - gen_bridges.ps1')
@@ -265,128 +317,131 @@ $sb = New-Object System.Text.StringBuilder
 [void]$sb.AppendLine('    internal static class GeneratedBridges')
 [void]$sb.AppendLine('    {')
 
-$bridgeCount = 0
-$slotIndex = 0
+$maxBridgesPerChunk = 500
+$totalBridges = $allEntries.Count
+
+[void]$sb.AppendLine('        internal static void RegisterAll()')
+[void]$sb.AppendLine('        {')
+
 $origSeq = 0
 $origSigs = @{}
-foreach ($e in $sorted) {
-    $sig = $e.Key
-    $freq = $e.Value
-    $d = $sigData[$sig]
-    $ret = $d.Ret
-    $nativeRet = $d.NativeRet
-    $params = $d.Params
-    $nativeParams = $d.NativeParams
-    $arity = $params.Count
 
-    if (-not $origSigs.ContainsKey($sig)) {
-        $oname = "OrigSig" + $origSeq
-        $origSigs[$sig] = $oname
-        $origSeq++
-        $opd = @()
-        for ($oi = 0; $oi -lt $arity; $oi++) { $opd += "$($nativeParams[$oi]) o$oi" }
-        $oargs = $opd -join ', '
-        [void]$sb.AppendLine("        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]")
-        if ($nativeRet -eq 'void') {
-            [void]$sb.AppendLine("        public delegate void $oname($oargs);")
-        } else {
-            [void]$sb.AppendLine("        public delegate $nativeRet $oname($oargs);")
-        }
-    }
+$totalChunks = [Math]::Ceiling($totalBridges / $maxBridgesPerChunk)
+if ($totalChunks -lt 1) { $totalChunks = 1 }
 
-    $slots = 1
-    if ($freq -ge 50) { $slots = 6 }
-    elseif ($freq -ge 20) { $slots = 4 }
-    elseif ($freq -ge 8) { $slots = 3 }
-    elseif ($freq -ge 3) { $slots = 2 }
-
-    for ($s = 0; $s -lt $slots; $s++) {
-        $slotName = "GenSlot$slotIndex"
-        $bridgeName = "GenBridge$slotIndex"
-        $slotIndex++
-
-        if ($nativeRet -eq 'void') {
-            if ($arity -eq 0) { $delType = 'DetourBridge.DetourAction' }
-            else { $delType = "DetourBridge.DetourAction<$($nativeParams -join ', ')>" }
-        } else {
-            if ($arity -eq 0) { $delType = "DetourBridge.DetourFunc<$nativeRet>" }
-            else { $delType = "DetourBridge.DetourFunc<$($nativeParams -join ', '), $nativeRet>" }
-        }
-
-        $sigParamDecl = @()
-        $args = @()
-        for ($i = 0; $i -lt $arity; $i++) {
-            $sigParamDecl += "$($nativeParams[$i]) a$i"
-            $args += "a$i"
-        }
-        $argList = $args -join ', '
-        $objArray = if ($arity -eq 0) { "Array.Empty<object>()" } else { "new object[] { $argList }" }
-
-        [void]$sb.AppendLine("        private sealed class $slotName { }")
-        if ($nativeRet -eq 'void') {
-            [void]$sb.AppendLine("        [AOT.MonoPInvokeCallback(typeof($delType))]")
-            [void]$sb.AppendLine("        private static void $bridgeName($($sigParamDecl -join ', '))")
-            [void]$sb.AppendLine("        {")
-            [void]$sb.AppendLine("            DetourBridge.InvokeBridge<$slotName>($objArray);")
-            [void]$sb.AppendLine("        }")
-        } else {
-            [void]$sb.AppendLine("        [AOT.MonoPInvokeCallback(typeof($delType))]")
-            [void]$sb.AppendLine("        private static $nativeRet $bridgeName($($sigParamDecl -join ', '))")
-            [void]$sb.AppendLine("        {")
-            [void]$sb.AppendLine("            return DetourBridge.InvokeBridgeR<$nativeRet, $slotName>($objArray);")
-            [void]$sb.AppendLine("        }")
-        }
-        $bridgeCount++
-    }
+for ($c = 0; $c -lt $totalChunks; $c++) {
+    [void]$sb.AppendLine("            GeneratedBridgesPart$c.RegisterAll();")
 }
-
-$sb2 = New-Object System.Text.StringBuilder
-[void]$sb2.AppendLine('        internal static void RegisterAll()')
-[void]$sb2.AppendLine('        {')
-$slotIndex2 = 0
-foreach ($e in $sorted) {
-    $sig = $e.Key
-    $freq = $e.Value
-    $d = $sigData[$sig]
-    $ret = $d.Ret
-    $nativeRet = $d.NativeRet
-    $nativeParams = $d.NativeParams
-    $params = $d.Params
-    $arity = $params.Count
-    $rawParams = $d.RawParams
-
-    $rawParamArr = if ($arity -eq 0) {
-        "Array.Empty<string>()"
-    } else {
-        $formatted = ($rawParams | ForEach-Object { "`"$_`"" }) -join ', '
-        "new string[] { $formatted }"
-    }
-
-    $slots = 1
-    if ($freq -ge 50) { $slots = 6 }
-    elseif ($freq -ge 20) { $slots = 4 }
-    elseif ($freq -ge 8) { $slots = 3 }
-    elseif ($freq -ge 3) { $slots = 2 }
-    for ($s = 0; $s -lt $slots; $s++) {
-        $slotName = "GenSlot$slotIndex2"
-        $bridgeName = "GenBridge$slotIndex2"
-        $slotIndex2++
-        if ($nativeRet -eq 'void') {
-            if ($arity -eq 0) { $delType = 'DetourBridge.DetourAction' }
-            else { $delType = "DetourBridge.DetourAction<$($nativeParams -join ', ')>" }
-        } else {
-            if ($arity -eq 0) { $delType = "DetourBridge.DetourFunc<$nativeRet>" }
-            else { $delType = "DetourBridge.DetourFunc<$($nativeParams -join ', '), $nativeRet>" }
-        }
-        [void]$sb2.AppendLine("            DetourBridge.RegisterGeneratedBridge(typeof($delType), typeof($slotName), typeof(GeneratedBridges).GetMethod(nameof($bridgeName), BindingFlags.NonPublic | BindingFlags.Static), typeof($($origSigs[$sig])), $rawParamArr);")
-    }
-}
-[void]$sb2.AppendLine('        }')
-
-[void]$sb.Append($sb2.ToString())
+[void]$sb.AppendLine('        }')
 [void]$sb.AppendLine('    }')
+
+$globalSlotIndex = 0
+$bridgeCount = 0
+
+for ($chunkIndex = 0; $chunkIndex -lt $totalChunks; $chunkIndex++) {
+    $startIndex = $chunkIndex * $maxBridgesPerChunk
+    $endIndex = [Math]::Min(($startIndex + $maxBridgesPerChunk - 1), ($totalBridges - 1))
+    
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine("    internal static class GeneratedBridgesPart$chunkIndex")
+    [void]$sb.AppendLine('    {')
+    
+    $chunkRegisterSb = New-Object System.Text.StringBuilder
+    [void]$chunkRegisterSb.AppendLine('        internal static void RegisterAll()')
+    [void]$chunkRegisterSb.AppendLine('        {')
+
+    for ($i = $startIndex; $i -le $endIndex; $i++) {
+        if ($i -ge $allEntries.Count) { break }
+        $e = $allEntries[$i]
+        $sig = $e.Key
+        $freq = $e.Value
+        $d = $sigData[$sig]
+        $ret = $d.Ret
+        $nativeRet = $d.NativeRet
+        $params = $d.Params
+        $nativeParams = $d.NativeParams
+        $rawParams = $d.RawParams
+        $arity = $params.Count
+
+        if (-not $origSigs.ContainsKey($sig)) {
+            $oname = "OrigSig" + $origSeq
+            $origSigs[$sig] = $oname
+            $origSeq++
+            $opd = @()
+            for ($oi = 0; $oi -lt $arity; $oi++) { $opd += "$($nativeParams[$oi]) o$oi" }
+            $oargs = $opd -join ', '
+            [void]$sb.AppendLine("        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]")
+            if ($nativeRet -eq 'void') {
+                [void]$sb.AppendLine("        public delegate void $oname($oargs);")
+            } else {
+                [void]$sb.AppendLine("        public delegate $nativeRet $oname($oargs);")
+            }
+        } else {
+            $oname = $origSigs[$sig]
+        }
+
+        $slots = 1
+        if ($freq -ge 50) { $slots = 6 }
+        elseif ($freq -ge 20) { $slots = 4 }
+        elseif ($freq -ge 8) { $slots = 3 }
+        elseif ($freq -ge 3) { $slots = 2 }
+
+        $rawParamArr = if ($arity -eq 0) {
+            "Array.Empty<string>()"
+        } else {
+            $formatted = ($rawParams | ForEach-Object { "`"$_`"" }) -join ', '
+            "new string[] { $formatted }"
+        }
+
+        for ($s = 0; $s -lt $slots; $s++) {
+            $slotName = "GenSlot$globalSlotIndex"
+            $bridgeName = "GenBridge$globalSlotIndex"
+            $globalSlotIndex++
+
+            if ($nativeRet -eq 'void') {
+                if ($arity -eq 0) { $delType = 'DetourBridge.DetourAction' }
+                else { $delType = "DetourBridge.DetourAction<$($nativeParams -join ', ')>" }
+            } else {
+                if ($arity -eq 0) { $delType = "DetourBridge.DetourFunc<$nativeRet>" }
+                else { $delType = "DetourBridge.DetourFunc<$($nativeParams -join ', '), $nativeRet>" }
+            }
+
+            $sigParamDecl = @()
+            $args = @()
+            for ($k = 0; $k -lt $arity; $k++) {
+                $sigParamDecl += "$($nativeParams[$k]) a$k"
+                $args += "a$k"
+            }
+            $argList = $args -join ', '
+            $objArray = if ($arity -eq 0) { "Array.Empty<object>()" } else { "new object[] { $argList }" }
+
+            [void]$sb.AppendLine("        private sealed class $slotName { }")
+            if ($nativeRet -eq 'void') {
+                [void]$sb.AppendLine("        [AOT.MonoPInvokeCallback(typeof($delType))]")
+                [void]$sb.AppendLine("        private static void $bridgeName($($sigParamDecl -join ', '))")
+                [void]$sb.AppendLine("        {")
+                [void]$sb.AppendLine("            DetourBridge.InvokeBridge<$slotName>($objArray);")
+                [void]$sb.AppendLine("        }")
+            } else {
+                [void]$sb.AppendLine("        [AOT.MonoPInvokeCallback(typeof($delType))]")
+                [void]$sb.AppendLine("        private static $nativeRet $bridgeName($($sigParamDecl -join ', '))")
+                [void]$sb.AppendLine("        {")
+                [void]$sb.AppendLine("            return DetourBridge.InvokeBridgeR<$nativeRet, $slotName>($objArray);")
+                [void]$sb.AppendLine("        }")
+            }
+
+            [void]$chunkRegisterSb.AppendLine("            DetourBridge.RegisterGeneratedBridge(typeof($delType), typeof($slotName), typeof(GeneratedBridgesPart$chunkIndex).GetMethod(nameof($bridgeName), BindingFlags.NonPublic | BindingFlags.Static), typeof($oname), $rawParamArr);")
+
+            $bridgeCount++
+        }
+    }
+
+    [void]$chunkRegisterSb.AppendLine('        }')
+    [void]$sb.Append($chunkRegisterSb.ToString())
+    [void]$sb.AppendLine('    }')
+}
+
 [void]$sb.AppendLine('}')
 
 [System.IO.File]::WriteAllText($outPath, $sb.ToString(), [System.Text.Encoding]::UTF8)
-Write-Host "Done total=$total byref=$skippedByref arityGt6=$skippedArity skippedUnbound=$skippedUnbound skippedAssembly=$skippedAssembly extras=$extraSeq distinct=$($sigCounts.Count) bridges=$bridgeCount"
-Write-Host "File size: $((Get-Item $outPath).Length) bytes"
+Write-Host "Total=$total byref=$skippedByref arityGt6=$skippedArity skippedUnbound=$skippedUnbound skippedAssembly=$skippedAssembly skippedComplexStruct=$skippedComplexStruct extras=$extraSeq distinct=$($sigCounts.Count) bridges=$bridgeCount"
