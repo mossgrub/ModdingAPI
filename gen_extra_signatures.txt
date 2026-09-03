@@ -1,0 +1,1 @@
+# Extra hook signatures for gen_bridges.ps1

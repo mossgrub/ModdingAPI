@@ -51,6 +51,16 @@ namespace Modding
                     _loadedAssemblies[fileName] = asm;
                     _loadedAssemblies[asm.GetName().Name] = asm;
                     NativeCompat.AssemblyLocations[asm] = path;
+                    // Native hook on Assembly.get_Location returns this path on IL2CPP.
+                    NativeBridge.Register(asm, path);
+                    try
+                    {
+                        string loc = null;
+                        try { loc = asm.Location; } catch (Exception lx) { loc = "<err:" + lx.GetType().Name + ">"; }
+                        Logger.APILogger.Log("[LOCPROBE] " + (asm.GetName().Name ?? "?") +
+                            " Location='" + (loc ?? "<null>") + "' expected='" + path + "'");
+                    }
+                    catch { }
                 }
                 return asm;
             }
@@ -82,8 +92,21 @@ namespace Modding
         {
             try
             {
-                byte[] assemblyBytes = File.ReadAllBytes(path);
-                return Assembly.Load(assemblyBytes);
+                Assembly asm = null;
+                try { asm = Assembly.LoadFrom(path); } catch { asm = null; }
+
+                if (asm == null)
+                {
+                    byte[] assemblyBytes = File.ReadAllBytes(path);
+                    asm = Assembly.Load(assemblyBytes);
+                }
+
+                if (asm != null)
+                {
+                    NativeCompat.AssemblyLocations[asm] = path;
+                }
+
+                return asm;
             }
             catch (Exception ex)
             {

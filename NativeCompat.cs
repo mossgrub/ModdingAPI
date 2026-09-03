@@ -12,6 +12,9 @@ namespace Modding
         internal static readonly ConcurrentDictionary<Assembly, string> AssemblyLocations =
             new ConcurrentDictionary<Assembly, string>();
 
+        internal static readonly ConcurrentDictionary<string, string> NameLocations =
+            new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
         private static readonly ConcurrentDictionary<MethodBase, List<Delegate>> HandlersByMethod =
             new ConcurrentDictionary<MethodBase, List<Delegate>>();
 
@@ -28,8 +31,10 @@ namespace Modding
                 return;
             }
 
+            NativeBridge.EnsureReady();
             InstallHookEndpointRedirect();
-            InstallAssemblyLocationPatch();
+            NativeBridge.EnsureLocationHook();
+            NativeBridge.EnsureAddComponentHook();
         }
 
         private static bool IsIl2Cpp
@@ -122,6 +127,7 @@ namespace Modding
                 {
                     Logger.APILogger.LogDebug(
                         "Compat: " + mi.Name + " already hooked.");
+                    DetourBridge.AddHandlerFor(mi, hook);
                     return false;
                 }
 
@@ -159,6 +165,7 @@ namespace Modding
                 return false;
             }
         }
+
         private static bool OnRemove(MethodBase method, Delegate hook)
         {
             try
@@ -218,7 +225,6 @@ namespace Modding
             return ps != null && ps.Length > 0 && typeof(Delegate).IsAssignableFrom(ps[0].ParameterType);
         }
 
-
         private static bool _locationPatched;
 
         private static void InstallAssemblyLocationPatch()
@@ -235,7 +241,7 @@ namespace Modding
                 }
 
                 Delegate handler = new Func<Func<Assembly, string>, Assembly, string>(LocationHandler);
-                if (DetourBridge.TryCreateOrigDetour(getLocation, handler, out _, out string error))
+                if (DetourBridge.TryInstallLocationHook(handler, out string error))
                 {
                     _locationPatched = true;
                     Logger.APILogger.Log("Assembly.Location patched.");
@@ -281,6 +287,17 @@ namespace Modding
                 return true;
             }
 
+            try
+            {
+                string nm = asm.GetName()?.Name;
+                if (!string.IsNullOrEmpty(nm) && NameLocations.TryGetValue(nm, out path) && !string.IsNullOrEmpty(path))
+                {
+                    AssemblyLocations[asm] = path;
+                    return true;
+                }
+            }
+            catch { }
+
             string fallback = asm.Location;
             if (!string.IsNullOrEmpty(fallback))
             {
@@ -298,6 +315,12 @@ namespace Modding
             if (asm != null && !string.IsNullOrEmpty(path))
             {
                 AssemblyLocations[asm] = path;
+                try
+                {
+                    string name = asm.GetName()?.Name;
+                    if (!string.IsNullOrEmpty(name)) NameLocations[name] = path;
+                }
+                catch { }
             }
         }
     }

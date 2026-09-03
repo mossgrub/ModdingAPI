@@ -60,7 +60,7 @@ namespace MonoMod.RuntimeDetour.HookGen
 
             if (registration.DetourApplied)
             {
-                Logger.APILogger.LogDebug($"On hook already applied for {fullName}; additional handler tracked (chain rebuild TBI).");
+                Logger.APILogger.LogDebug($"On hook already applied for {fullName}. Additional handler tracked (chain rebuild TBI).");
                 return;
             }
 
@@ -68,7 +68,7 @@ namespace MonoMod.RuntimeDetour.HookGen
             {
                 if (!DetourBridge.IsAvailable)
                 {
-                    Logger.APILogger.LogWarn($"Dobby is not available; On hook not applied for {fullName}.");
+                    Logger.APILogger.LogWarn($"Dobby is not available. On hook not applied for {fullName}.");
                     registration.RemoveHandler(handler);
                     if (registration.IsEmpty) Registrations.TryRemove(method, out _);
                     return;
