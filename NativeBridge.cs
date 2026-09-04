@@ -91,6 +91,7 @@ namespace Modding
 
                 IntPtr addPtr = Il2CppResolver.TryGetMethodPointer(addType, 1, "System.Type");
                 IntPtr getInfo = Il2CppResolver.TryGetMethodInfoPointer(getType, 1, "System.Type");
+                Logger.APILogger.LogDebug("AddComponent hook resolve: addComponentPtr=0x" + addPtr.ToInt64().ToString("X") + " getComponentMethodInfo=0x" + getInfo.ToInt64().ToString("X"));
                 if (addPtr == IntPtr.Zero || getInfo == IntPtr.Zero) return;
 
                 _addComponentHookInstalled = InstallAddComponentHook(addPtr, getInfo) != 0;

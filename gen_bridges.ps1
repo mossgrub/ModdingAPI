@@ -81,7 +81,8 @@ function Convert-Type([string]$fn) {
 }
 
 function Normalize-RawType([string]$t) {
-    switch ($t) {
+    $normalized = $t -replace '/', '+'
+    switch ($normalized) {
         'void'    { return 'System.Void' }
         'bool'    { return 'System.Boolean' }
         'int'     { return 'System.Int32' }
@@ -94,7 +95,7 @@ function Normalize-RawType([string]$t) {
         'short'   { return 'System.Int16' }
         'byte'    { return 'System.Byte' }
         'char'    { return 'System.Char' }
-        default   { return $t }
+        default   { return $normalized }
     }
 }
 
@@ -117,11 +118,7 @@ function Is-RefTypeString([string]$typeStr) {
         'ushort', 'System.UInt16',
         'decimal', 'System.Decimal',
         'System.IntPtr', 'IntPtr',
-        'System.UIntPtr', 'UIntPtr',
-        'UnityEngine.Vector2', 'UnityEngine.Vector3', 'UnityEngine.Vector4',
-        'UnityEngine.Quaternion', 'UnityEngine.Color', 'UnityEngine.Color32',
-        'UnityEngine.Rect', 'UnityEngine.Bounds', 'UnityEngine.Matrix4x4',
-        'GlobalEnums.CollisionSide', 'HitInstance', 'DieCause', 'AttackTypes'
+        'System.UIntPtr', 'UIntPtr'
     )
     if ($valueTypes -contains $typeStr) { return $false }
     return $true
@@ -152,39 +149,7 @@ function Is-AssemblyType($td) {
 function Is-SafeBlittableType($pt) {
     if ($null -eq $pt) { return $false }
     if (Has-UnboundGeneric $pt) { return $false }
-    
-    $isValueType = $false
-    try {
-        $isValueType = $pt.IsValueType
-    } catch {
-        return $false
-    }
-    
-    if (-not $isValueType) { return $true }
-    
-    try {
-        if ($pt.IsEnum) { return $true }
-    } catch {}
-    
-    $fullName = $pt.FullName
-    $primitiveValueTypes = @(
-        'System.Boolean', 'System.Byte', 'System.SByte', 'System.Int16', 'System.UInt16',
-        'System.Int32', 'System.UInt32', 'System.Int64', 'System.UInt64',
-        'System.Single', 'System.Double', 'System.Char', 'System.IntPtr', 'System.UIntPtr',
-        'bool', 'byte', 'sbyte', 'short', 'ushort', 'int', 'uint', 'long', 'ulong',
-        'float', 'double', 'char', 'IntPtr', 'UIntPtr'
-    )
-    if ($primitiveValueTypes -contains $fullName) { return $true }
-    
-    $allowedStructs = @(
-        'UnityEngine.Vector2', 'UnityEngine.Vector3', 'UnityEngine.Vector4',
-        'UnityEngine.Quaternion', 'UnityEngine.Color', 'UnityEngine.Color32',
-        'UnityEngine.Rect', 'UnityEngine.Bounds', 'UnityEngine.Matrix4x4',
-        'GlobalEnums.CollisionSide', 'HitInstance', 'DieCause', 'AttackTypes'
-    )
-    if ($allowedStructs -contains $fullName) { return $true }
-    
-    return $false
+    return $true
 }
 
 $sigCounts = @{}
@@ -267,7 +232,7 @@ foreach ($path in $mmhookPaths) {
                 
                 $csType = Convert-Type $pt.FullName
                 $paramCs += $csType
-                $rawParams += $pt.FullName
+                $rawParams += (Normalize-RawType $pt.FullName)
                 
                 $isRef = (-not $pt.IsValueType)
                 if ($isRef) { $nativeParamCs += 'IntPtr' } else { $nativeParamCs += $csType }
@@ -380,11 +345,11 @@ for ($chunkIndex = 0; $chunkIndex -lt $totalChunks; $chunkIndex++) {
             $oname = $origSigs[$sig]
         }
 
-        $slots = 1
-        if ($freq -ge 50) { $slots = 6 }
-        elseif ($freq -ge 20) { $slots = 4 }
-        elseif ($freq -ge 8) { $slots = 3 }
-        elseif ($freq -ge 3) { $slots = 2 }
+        $slots = 2
+        if ($freq -ge 50) { $slots = 8 }
+        elseif ($freq -ge 20) { $slots = 6 }
+        elseif ($freq -ge 8) { $slots = 4 }
+        elseif ($freq -ge 3) { $slots = 3 }
 
         $rawParamArr = if ($arity -eq 0) {
             "Array.Empty<string>()"

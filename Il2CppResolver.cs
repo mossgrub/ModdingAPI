@@ -170,6 +170,14 @@ namespace Modding
                         }
                         if (!match) continue;
                     }
+                    else if (paramTypeNames != null && paramTypeNames.Length > 0)
+                    {
+                        string missingSym = a.MethodGetParam == null ? "il2cpp_method_get_param" : "il2cpp_type_get_name";
+                        Logger.APILogger.LogWarn(
+                            "il2cpp param-type filter unavailable (" + missingSym +
+                            " null) on " + lib + " - matching \"" + methodName +
+                            "\" by name/arity only; may resolve wrong overload.");
+                    }
 
                     IntPtr mp = Marshal.ReadIntPtr(methodInfo, MethodPointerOffset);
                     if (mp != IntPtr.Zero && (ulong)mp.ToInt64() > 0x1000UL) return methodInfo;

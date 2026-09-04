@@ -48,11 +48,33 @@ namespace Modding
                 Assembly asm = _useHybridCLR ? LoadAssemblyHybridCLR(path) : LoadAssemblyMono(path);
                 if (asm != null)
                 {
+                    if (_useHybridCLR)
+                    {
+                        try
+                        {
+                            EmbeddedResourceExtractor.Extract(path);
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.APILogger.LogWarn($"EmbeddedResourceExtractor error for `{path}`: {ex.Message}");
+                        }
+                    }
                     _loadedAssemblies[fileName] = asm;
                     _loadedAssemblies[asm.GetName().Name] = asm;
                     NativeCompat.AssemblyLocations[asm] = path;
-                    // Native hook on Assembly.get_Location returns this path on IL2CPP.
                     NativeBridge.Register(asm, path);
+                    try
+                    {
+                        string dir = Path.GetDirectoryName(path);
+                        if (!string.IsNullOrEmpty(dir))
+                        {
+                            Directory.CreateDirectory(dir);
+                        }
+                    }
+                    catch (Exception dirEx)
+                    {
+                        Logger.APILogger.LogWarn($"Could not ensure mod directory for `{path}`: {dirEx.Message}");
+                    }
                     try
                     {
                         string loc = null;
