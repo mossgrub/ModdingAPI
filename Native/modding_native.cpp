@@ -71,9 +71,11 @@ DomainAssembliesFn g_domainAsm      = nullptr;
 
 typedef void *(*Il2CppTypeFromReflectionFn)(void *reflectionType);
 typedef void *(*Il2CppClassFromTypeFn)(void *type);
+typedef const char *(*Il2CppClassGetNameFn)(void *klass);
 
 Il2CppTypeFromReflectionFn g_typeFromReflection = nullptr;
 Il2CppClassFromTypeFn       g_classFromType       = nullptr;
+Il2CppClassGetNameFn        g_classGetName        = nullptr;
 
 typedef int (*DobbyHookFn)(void *target, void *replacement, void **outTrampoline);
 typedef int (*DobbyDestroyFn)(void *target);
@@ -344,7 +346,8 @@ int mod2_init(void) {
 
     g_typeFromReflection = (Il2CppTypeFromReflectionFn)dlsym(h, "il2cpp_type_from_reflection");
     g_classFromType       = (Il2CppClassFromTypeFn)dlsym(h, "il2cpp_class_from_type");
-    LOGI("mod2_init: type_from_reflection=%p class_from_type=%p", (void*)g_typeFromReflection, (void*)g_classFromType);
+    g_classGetName        = (Il2CppClassGetNameFn)dlsym(h, "il2cpp_class_get_name");
+    LOGI("mod2_init: type_from_reflection=%p class_from_type=%p class_get_name=%p", (void*)g_typeFromReflection, (void*)g_classFromType, (void*)g_classGetName);
 
     g_ready = true;
     return 1;
@@ -382,17 +385,30 @@ void mod2_unbox(void *boxedObject, void *outBuffer, int size) {
     memcpy(outBuffer, p, (size_t)size);
 }
 
+static void NormalizePathSlashes(char *path) {
+    if (!path) return;
+    for (char *p = path; *p; ++p) {
+        if (*p == '\\') *p = '/';
+    }
+}
+
 void mod2_register_assembly_path(void *assemblyObjectPtr, const char *assemblyName,
                                   const char *absolutePath, void *assemblyNativePtr) {
     if (!g_ready || !absolutePath) return;
     if (!assemblyName && !assemblyObjectPtr && !assemblyNativePtr) return;
+
+    char cleanPath[MAX_PATHLEN];
+    strncpy(cleanPath, absolutePath, MAX_PATHLEN - 1);
+    cleanPath[MAX_PATHLEN - 1] = '\0';
+    NormalizePathSlashes(cleanPath);
+
     pthread_mutex_lock(&g_pathLock);
     for (int i = 0; i < gPathCount; ++i) {
         bool sameName   = assemblyName && NameMatches(assemblyName, gNames[i]);
         bool sameObj    = assemblyObjectPtr && gAsms[i] == assemblyObjectPtr;
         bool sameNative = assemblyNativePtr && gAsmNative[i] == assemblyNativePtr;
         if (sameName || sameObj || sameNative) {
-            strncpy(gPaths[i], absolutePath, MAX_PATHLEN - 1);
+            strncpy(gPaths[i], cleanPath, MAX_PATHLEN - 1);
             gPaths[i][MAX_PATHLEN - 1] = '\0';
             if (assemblyName) { strncpy(gNames[i], assemblyName, MAX_PATHLEN - 1); gNames[i][MAX_PATHLEN-1] = '\0'; }
             if (assemblyObjectPtr) gAsms[i] = assemblyObjectPtr;
@@ -407,7 +423,7 @@ void mod2_register_assembly_path(void *assemblyObjectPtr, const char *assemblyNa
         gAsmNative[i] = assemblyNativePtr;
         strncpy(gNames[i], assemblyName ? assemblyName : "", MAX_PATHLEN - 1);
         gNames[i][MAX_PATHLEN - 1] = '\0';
-        strncpy(gPaths[i], absolutePath, MAX_PATHLEN - 1);
+        strncpy(gPaths[i], cleanPath, MAX_PATHLEN - 1);
         gPaths[i][MAX_PATHLEN - 1] = '\0';
         gPathCount++;
     }
@@ -429,40 +445,83 @@ int mod2_install_location_hook(void *getLocationMethodPtr) {
     return g_locationInstalled ? 1 : 0;
 }
 
-// UnityEngine.GameObject.AddComponent(System.Type)
-
 static void *g_addComponentTarget     = nullptr;
 static void *g_addComponentOrig       = nullptr;
 static void *g_getComponentMethodInfo = nullptr;
 static bool  g_addComponentInstalled  = false;
 static int   g_addCompLogs            = 0;
 
+static void AddCompLog(const char *fmt, ...) {
+    if (g_addCompLogs >= 240) return;
+    ++g_addCompLogs;
+
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    LOGI("mod2 ac#%d: %s", g_addCompLogs, buf);
+}
+
+static const char *ObjClassNameForLog(void *obj) {
+    if (!obj) return "null";
+    if (g_objGetClass && g_classGetName) {
+        void *k = g_objGetClass(obj);
+        if (k) {
+            const char *n = g_classGetName(k);
+            if (n && *n) return n;
+        }
+    }
+    return "?";
+}
+
+static const char *TypeNameForLog(void *typeObj) {
+    if (!typeObj) return "null";
+    const char *oc = ObjClassNameForLog(typeObj);
+    if (!oc) return "?";
+
+    if (strcmp(oc, "System.Type") != 0 && strcmp(oc, "System.RuntimeType") != 0) return oc;
+
+    if (g_typeFromReflection && g_classFromType && g_classGetName) {
+        void *t = g_typeFromReflection(typeObj);
+        if (t) {
+            void *k = g_classFromType(t);
+            if (k) {
+                const char *n = g_classGetName(k);
+                if (n && *n) return n;
+            }
+        }
+    }
+    return oc;
+}
+
 static void *AddComponentHook(void *self, void *type, void *methodInfo) {
     if (!self || !type) return nullptr;
+    AddCompLog("AddComponent(%s) self=%p typeObjClass=%s", TypeNameForLog(type), self, ObjClassNameForLog(type));
 
-    void *res = nullptr;
-
-    if (g_addComponentOrig) {
-        typedef void* (*AddComponentFn)(void*, void*, void*);
-        res = ((AddComponentFn)g_addComponentOrig)(self, type, methodInfo);
-    }
-
-    if (!res && g_getComponentMethodInfo && g_invoke) {
+    if (g_getComponentMethodInfo && g_invoke) {
         void *args[1] = { type };
         void *exc = nullptr;
         void *existing = g_invoke(g_getComponentMethodInfo, self, args, &exc);
+        AddCompLog("GetComponent(%s) -> existing=%p exc=%p", TypeNameForLog(type), existing, exc);
 
         if (existing && !exc) {
             if (g_addCompLogs < 60) {
                 ++g_addCompLogs;
-                LOGI("mod2 ac#%d: AddComponent returned null. Reusing existing component %p in GameObject %p",
-                     g_addCompLogs, existing, self);
+                LOGI("mod2 ac#%d: Existing component reused in the GameObject %p",
+                     g_addCompLogs, self);
             }
             return existing;
         }
     }
 
-    return res;
+    if (g_addComponentOrig) {
+        AddCompLog("fallback to orig AddComponent(%s)", TypeNameForLog(type));
+        typedef void* (*AddComponentFn)(void*, void*, void*);
+        return ((AddComponentFn)g_addComponentOrig)(self, type, methodInfo);
+    }
+
+    return nullptr;
 }
 
 int mod2_install_addcomponent_hook(void *addComponentMethodPtr, void *getComponentMethodInfo) {
