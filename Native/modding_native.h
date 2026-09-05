@@ -26,7 +26,9 @@ void mod2_unbox(void *boxedObject, void *outBuffer, int size);
 void mod2_register_assembly_path(void *assemblyObjectPtr, const char *assemblyName,
                                  const char *absolutePath, void *assemblyNativePtr);
 
-int mod2_install_addcomponent_hook(void *addComponentMethodPtr, void *getComponentMethodInfo);
+void mod2_set_location_resolver(void *resolverMethodInfo);
+
+int mod2_install_addcomponent_hook(void *addComponentMethodPtr, void *getComponentMethodInfo, void *getComponentFuncPtr);
 
 #ifdef __cplusplus
 }

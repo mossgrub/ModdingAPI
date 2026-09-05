@@ -245,6 +245,8 @@ static bool ResolveAssemblyName(const void *self, char *outBuf, size_t outLen) {
     return false;
 }
 
+static void *LocationResolverCall(const char *name);
+
 static const char *ResolvePathFromAssemblyObject(void *self) {
     if (!self) return nullptr;
 
@@ -284,6 +286,24 @@ static const char *ResolvePathFromAssemblyObject(void *self) {
     return nullptr;
 }
 
+static void *g_locationResolverMethodInfo = nullptr;
+
+extern "C" void mod2_set_location_resolver(void *resolverMethodInfo) {
+    g_locationResolverMethodInfo = resolverMethodInfo;
+}
+
+// Asks the managed side (NativeCompat.ResolveLocationFallback) to map an assembly
+// name to the registered absolute path. Used only when every native resolve fails.
+static void *LocationResolverCall(const char *name) {
+    if (!g_locationResolverMethodInfo || !g_invoke || !g_strNew || !name || !*name) return nullptr;
+    void *nameStr = g_strNew(name);
+    if (!nameStr) return nullptr;
+    void *args[1] = { nameStr };
+    void *exc = nullptr;
+    void *res = g_invoke(g_locationResolverMethodInfo, nullptr, args, &exc);
+    return (res && !exc) ? res : nullptr;
+}
+
 static int g_locLogs = 0;
 #define LOC_LOG(fmt, ...) do { \
     if (g_locLogs < 40) { \
@@ -292,6 +312,40 @@ static int g_locLogs = 0;
     } \
 } while (0)
 
+static void *ResolveManagedLocationFallback(void *self) {
+    if (!g_locationResolverMethodInfo || !g_invoke || !g_strNew || !self) return nullptr;
+
+    char nm[512] = {0};
+    if (ResolveAssemblyName(self, nm, sizeof(nm))) {
+        void *str = LocationResolverCall(nm);
+        if (str) {
+            LOC_LOG("Resolved Assembly Location (managed fallback): %s", nm);
+            return str;
+        }
+    }
+
+    uintptr_t *ptrArray = (uintptr_t*)self;
+    for (int offset = 1; offset < 12; ++offset) {
+        void *candidatePtr = (void*)ptrArray[offset];
+        if (!candidatePtr) continue;
+        if (g_asmGetImage && g_imgGetName) {
+            void *img = g_asmGetImage(candidatePtr);
+            if (img) {
+                const char *imgName = g_imgGetName(img);
+                if (imgName && *imgName) {
+                    void *str2 = LocationResolverCall(imgName);
+                    if (str2) {
+                        LOC_LOG("Resolved Assembly Location (managed fallback): %s", imgName);
+                        return str2;
+                    }
+                }
+            }
+        }
+    }
+
+    return nullptr;
+}
+
 static void *LocationHookImpl(void *self) {
     if (g_strNew && self) {
         const char *p = ResolvePathFromAssemblyObject(self);
@@ -299,6 +353,10 @@ static void *LocationHookImpl(void *self) {
             LOC_LOG("Resolved Assembly Location: %s", p);
             return g_strNew(p);
         }
+        void *managed = ResolveManagedLocationFallback(self);
+        if (managed) return managed;
+        static int failLogs = 0;
+        if (failLogs < 20) { ++failLogs; LOGI("mod2 locfail#%d: resolve failed for self=%p", failLogs, self); }
     }
 
     void *origRes = g_origGetLocation ? ((void *(*)(void *))g_origGetLocation)(self) : nullptr;
@@ -448,6 +506,7 @@ int mod2_install_location_hook(void *getLocationMethodPtr) {
 static void *g_addComponentTarget     = nullptr;
 static void *g_addComponentOrig       = nullptr;
 static void *g_getComponentMethodInfo = nullptr;
+static void *g_getComponentFuncPtr    = nullptr;
 static bool  g_addComponentInstalled  = false;
 static int   g_addCompLogs            = 0;
 
@@ -480,7 +539,9 @@ static const char *TypeNameForLog(void *typeObj) {
     const char *oc = ObjClassNameForLog(typeObj);
     if (!oc) return "?";
 
-    if (strcmp(oc, "System.Type") != 0 && strcmp(oc, "System.RuntimeType") != 0) return oc;
+    // il2cpp_class_get_name returns the SHORT class name (e.g. "RuntimeType"),
+    // so compare short names so the reflection chain is actually followed.
+    if (strcmp(oc, "Type") != 0 && strcmp(oc, "RuntimeType") != 0 && strcmp(oc, "MonoType") != 0) return oc;
 
     if (g_typeFromReflection && g_classFromType && g_classGetName) {
         void *t = g_typeFromReflection(typeObj);
@@ -499,20 +560,16 @@ static void *AddComponentHook(void *self, void *type, void *methodInfo) {
     if (!self || !type) return nullptr;
     AddCompLog("AddComponent(%s) self=%p typeObjClass=%s", TypeNameForLog(type), self, ObjClassNameForLog(type));
 
-    if (g_getComponentMethodInfo && g_invoke) {
-        void *args[1] = { type };
-        void *exc = nullptr;
-        void *existing = g_invoke(g_getComponentMethodInfo, self, args, &exc);
-        AddCompLog("GetComponent(%s) -> existing=%p exc=%p", TypeNameForLog(type), existing, exc);
+    if (g_getComponentFuncPtr) {
+        typedef void* (*GetComponentFn)(void*, void*, void*);
+        void *existing = ((GetComponentFn)g_getComponentFuncPtr)(self, type, g_getComponentMethodInfo);
+        AddCompLog("GetComponent(%s) -> existing=%p", TypeNameForLog(type), existing);
 
-        if (existing && !exc) {
-            if (g_addCompLogs < 60) {
-                ++g_addCompLogs;
-                LOGI("mod2 ac#%d: Existing component reused in the GameObject %p",
-                     g_addCompLogs, self);
-            }
+        if (existing) {
             return existing;
         }
+    } else {
+        AddCompLog("GetComponent: no direct func ptr available");
     }
 
     if (g_addComponentOrig) {
@@ -524,11 +581,12 @@ static void *AddComponentHook(void *self, void *type, void *methodInfo) {
     return nullptr;
 }
 
-int mod2_install_addcomponent_hook(void *addComponentMethodPtr, void *getComponentMethodInfo) {
+int mod2_install_addcomponent_hook(void *addComponentMethodPtr, void *getComponentMethodInfo, void *getComponentFuncPtr) {
     if (g_addComponentInstalled) return 1;
-    if (!addComponentMethodPtr || !getComponentMethodInfo || !g_ready) return 0;
+    if (!addComponentMethodPtr || !getComponentFuncPtr || !g_ready) return 0;
 
     g_getComponentMethodInfo = getComponentMethodInfo;
+    g_getComponentFuncPtr    = getComponentFuncPtr;
     int rc = g_dobbyHook(addComponentMethodPtr, (void *)AddComponentHook, (void **)&g_addComponentOrig);
     g_addComponentInstalled = (rc == 0);
     if (!g_addComponentInstalled) LOGE("GameObject.AddComponent DobbyHook failed rc=%d", rc);
