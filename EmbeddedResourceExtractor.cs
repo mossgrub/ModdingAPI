@@ -1,9 +1,11 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using Mono.Cecil;
 using UnityEngine;
+using UnityEngine.Networking;
 
 namespace Modding
 {
@@ -105,21 +107,81 @@ namespace Modding
             }
         }
 
-        private static ReaderParameters CreateReaderParams()
+        private sealed class ApkAssetResolver : IAssemblyResolver
         {
-            var resolver = new DefaultAssemblyResolver();
+            private readonly DefaultAssemblyResolver _fallback = new DefaultAssemblyResolver();
+            private readonly Dictionary<string, byte[]> _cache = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+
+            public void AddSearchDirectory(string path)
+            {
+                if (!string.IsNullOrEmpty(path) && Directory.Exists(path)) _fallback.AddSearchDirectory(path);
+            }
+
+            public AssemblyDefinition Resolve(AssemblyNameReference name)
+            {
+                return Resolve(name, new ReaderParameters { AssemblyResolver = this });
+            }
+
+            public AssemblyDefinition Resolve(AssemblyNameReference name, ReaderParameters parameters)
+            {
+                AssemblyDefinition def = null;
+                try { def = _fallback.Resolve(name, parameters); } catch { def = null; }
+                if (def != null) return def;
+
+                byte[] bytes = LoadBytes(name.Name);
+                if (bytes == null) return null;
+
+                try
+                {
+                    var ms = new MemoryStream(bytes, writable: false);
+                    var rp = new ReaderParameters
+                    {
+                        ReadingMode = parameters.ReadingMode,
+                        ReadSymbols = false,
+                        AssemblyResolver = this
+                    };
+                    return AssemblyDefinition.ReadAssembly(ms, rp);
+                }
+                catch { return null; }
+            }
+
+            private byte[] LoadBytes(string asmName)
+            {
+                if (_cache.TryGetValue(asmName, out byte[] b)) return b;
+                byte[] data = TryReadAssetBytes("HybridCLRData/il2cpp_data/Managed/" + asmName + ".dll");
+                if (data == null) data = TryReadAssetBytes("HybridCLRData/hot_update_dlls/" + asmName + ".dll");
+                if (data != null && data.Length > 0) _cache[asmName] = data;
+                return data;
+            }
+
+            public void Dispose() { _fallback.Dispose(); }
+        }
+
+        private static byte[] TryReadAssetBytes(string relativePath)
+        {
             try
             {
-                string[] dirs = new[]
+                string url = Application.streamingAssetsPath + "/" + relativePath;
+                using (UnityWebRequest uwr = UnityWebRequest.Get(url))
                 {
-                    Path.Combine(Application.streamingAssetsPath, "HybridCLRData", "il2cpp_data", "Managed"),
-                    Path.Combine(Application.persistentDataPath, "Mods"),
-                    Path.Combine(Application.dataPath, "Managed")
-                };
-                foreach (string d in dirs)
-                {
-                    if (!string.IsNullOrEmpty(d) && Directory.Exists(d)) resolver.AddSearchDirectory(d);
+                    var op = uwr.SendWebRequest();
+                    float deadline = Time.realtimeSinceStartup + 15f;
+                    while (!op.isDone && Time.realtimeSinceStartup < deadline) Thread.Sleep(5);
+                    if (!op.isDone) { uwr.Abort(); return null; }
+                    if (uwr.isNetworkError || uwr.isHttpError) return null;
+                    return uwr.downloadHandler != null ? uwr.downloadHandler.data : null;
                 }
+            }
+            catch { return null; }
+        }
+
+        private static ReaderParameters CreateReaderParams()
+        {
+            var resolver = new ApkAssetResolver();
+            try
+            {
+                resolver.AddSearchDirectory(Path.Combine(Application.persistentDataPath, "Mods"));
+                resolver.AddSearchDirectory(Path.Combine(Application.dataPath, "Managed"));
             }
             catch (Exception ex)
             {

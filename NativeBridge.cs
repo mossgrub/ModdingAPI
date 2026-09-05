@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using UnityEngine;
@@ -39,6 +39,8 @@ namespace Modding
 
         [DllImport("modding_native", EntryPoint = "mod2_set_location_resolver")]
         private static extern void SetLocationResolverNative(IntPtr resolverMethodInfo);
+        [DllImport("modding_native", EntryPoint = "mod2_set_location_resolver_object")]
+        private static extern void SetLocationResolverObjectNative(IntPtr resolverMethodInfo);
 
         private static bool _initTried;
         private static bool _ready;
@@ -87,6 +89,13 @@ namespace Modding
                         {
                             IntPtr rlInfo = Il2CppResolver.TryGetMethodInfoPointer(rl, 1, "System.String");
                             if (rlInfo != IntPtr.Zero) SetLocationResolverNative(rlInfo);
+                        }
+                        MethodInfo rlo = typeof(NativeCompat).GetMethod(nameof(NativeCompat.ResolveLocationFallbackObject),
+                            BindingFlags.NonPublic | BindingFlags.Static);
+                        if (rlo != null)
+                        {
+                            IntPtr rloInfo = Il2CppResolver.TryGetMethodInfoPointer(rlo, 1, "System.Reflection.Assembly");
+                            if (rloInfo != IntPtr.Zero) SetLocationResolverObjectNative(rloInfo);
                         }
                     }
                     catch (Exception ex2) { Logger.APILogger.LogWarn("Native location resolver setup failed: " + ex2.Message); }

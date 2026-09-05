@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Reflection;
@@ -315,6 +315,20 @@ namespace Modding
             if (string.IsNullOrEmpty(assemblyName)) return null;
             if (NameLocations.TryGetValue(assemblyName, out string path) && !string.IsNullOrEmpty(path))
                 return path;
+            return null;
+        }
+        internal static string ResolveLocationFallbackObject(Assembly asm)
+        {
+            if (asm == null) return null;
+            if (AssemblyLocations.TryGetValue(asm, out string path) && !string.IsNullOrEmpty(path))
+                return path;
+            try
+            {
+                string n = asm.GetName()?.Name;
+                if (!string.IsNullOrEmpty(n) && NameLocations.TryGetValue(n, out path) && !string.IsNullOrEmpty(path))
+                    return path;
+            }
+            catch { }
             return null;
         }
 

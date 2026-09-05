@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -20,8 +20,6 @@ namespace Modding
         [DllImport("dobby", EntryPoint = "DobbyDestroy")]
         private static extern int DobbyUnhookNative(IntPtr target);
 
-        // Unhooks without throwing, so a failed detour never leaves a dangling native hook on the target
-        // MarshalDirectiveException spam when Assembly.get_Location was left hooked).
         private static void TryUnhook(IntPtr target)
         {
             if (target == IntPtr.Zero) return;
@@ -340,8 +338,6 @@ namespace Modding
             typeof(OrigAdapter).GetMethod(nameof(OrigAdapter.G6), BindingFlags.Public | BindingFlags.Instance)
         };
 
-        // Builds a managed orig delegate typed as the mod's generated '.orig_X' expects,
-        // bound to an OrigAdapter whose body forwards every call to the native glue.
         private static Delegate CreateManagedOrigDelegate(Type origDelegateType, MethodInfo targetMethod, OrigAdapter adapter)
         {
             if (origDelegateType == null || targetMethod == null || adapter == null) return null;
@@ -429,6 +425,33 @@ namespace Modding
         public static Type GetDelegateTypeForMethod(MethodInfo method)
         {
             return GetDelegateTypeForMethod(method, out _);
+        }
+
+        private static Type BuildRealDelegateTypeForMethod(MethodInfo method, out string error)
+        {
+            error = null;
+            if (method == null) { error = "null method"; return null; }
+            var ps = method.GetParameters();
+            int arity = ps.Length + (method.IsStatic ? 0 : 1);
+            if (arity > MaxArgs) { error = "unsupported arity " + arity; return null; }
+            for (int i = 0; i < ps.Length; i++)
+            {
+                if (ps[i].ParameterType.IsByRef) { error = "byref parameter not supported"; return null; }
+            }
+            var typeArgs = new Type[arity];
+            int idx = 0;
+            if (!method.IsStatic) typeArgs[idx++] = method.DeclaringType;
+            for (int i = 0; i < ps.Length; i++) typeArgs[idx++] = ps[i].ParameterType;
+            try
+            {
+                if (method.ReturnType == typeof(void))
+                    return VoidDelegateTypes[arity].MakeGenericType(typeArgs);
+                var r = new Type[arity + 1];
+                Array.Copy(typeArgs, 0, r, 0, arity);
+                r[arity] = method.ReturnType;
+                return ReturningDelegateTypes[arity].MakeGenericType(r);
+            }
+            catch (Exception ex) { error = ex.Message; return null; }
         }
 
         private static bool HasNullableParameter(MethodInfo m)
@@ -995,6 +1018,19 @@ namespace Modding
                 }
                 Installed[targetMethod] = new InstalledHook { Target = targetMethod, Slot = flatCbi.Slot, Orig = origDelegate2 };
                 trampolineDelegate = origDelegate2;
+                return true;
+            }
+
+            Type realDelegateType = BuildRealDelegateTypeForMethod(targetMethod, out _);
+            if (realDelegateType != null && TryGetFreeBridge(realDelegateType, out ConcreteBridgeInfo realCbi))
+            {
+                Delegate origDelegate3;
+                if (!TryInstallConcreteDetour(targetMethod, realCbi.Slot, realDelegateType, realCbi.OrigType, realCbi.Bridge, replacement, out origDelegate3, out error))
+                {
+                    return false;
+                }
+                Installed[targetMethod] = new InstalledHook { Target = targetMethod, Slot = realCbi.Slot, Orig = origDelegate3 };
+                trampolineDelegate = origDelegate3;
                 return true;
             }
 
