@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Mono.Cecil;
+using UnityEngine;
 
 namespace Modding
 {
@@ -41,13 +42,7 @@ namespace Modding
 
                 string assemblyName = Path.GetFileNameWithoutExtension(assemblyPath);
 
-                var readParams = new ReaderParameters
-                {
-                    ReadingMode = ReadingMode.Immediate,
-                    ReadSymbols = false
-                };
-
-                using (AssemblyDefinition asmDef = AssemblyDefinition.ReadAssembly(assemblyPath, readParams))
+                using (AssemblyDefinition asmDef = AssemblyDefinition.ReadAssembly(assemblyPath, CreateReaderParams()))
                 {
                     if (asmDef?.MainModule?.Resources == null || asmDef.MainModule.Resources.Count == 0)
                     {
@@ -88,6 +83,7 @@ namespace Modding
                                 if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
                                 File.WriteAllBytes(full, data);
                                 written++;
+                                Logger.APILogger.LogDebug("Resource Extractor wrote: " + full);
                             }
                             catch (Exception ex)
                             {
@@ -107,6 +103,35 @@ namespace Modding
             {
                 Logger.APILogger.LogWarn($"Failed for `{assemblyPath}`: {ex.Message}");
             }
+        }
+
+        private static ReaderParameters CreateReaderParams()
+        {
+            var resolver = new DefaultAssemblyResolver();
+            try
+            {
+                string[] dirs = new[]
+                {
+                    Path.Combine(Application.streamingAssetsPath, "HybridCLRData", "il2cpp_data", "Managed"),
+                    Path.Combine(Application.persistentDataPath, "Mods"),
+                    Path.Combine(Application.dataPath, "Managed")
+                };
+                foreach (string d in dirs)
+                {
+                    if (!string.IsNullOrEmpty(d) && Directory.Exists(d)) resolver.AddSearchDirectory(d);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogWarn("EmbeddedResourceExtractor: resolver setup warning: " + ex.Message);
+            }
+
+            return new ReaderParameters
+            {
+                ReadingMode = ReadingMode.Immediate,
+                ReadSymbols = false,
+                AssemblyResolver = resolver
+            };
         }
 
         private static IEnumerable<string> BuildCandidatePaths(string resourceName, string assemblyName)

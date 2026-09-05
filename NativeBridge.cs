@@ -35,7 +35,10 @@ namespace Modding
         private static extern void UnboxNative(IntPtr boxedObject, IntPtr outBuffer, int size);
 
         [DllImport("modding_native", EntryPoint = "mod2_install_addcomponent_hook")]
-        private static extern int InstallAddComponentHook(IntPtr addComponentMethodPtr, IntPtr getComponentMethodInfo);
+        private static extern int InstallAddComponentHook(IntPtr addComponentMethodPtr, IntPtr getComponentMethodInfo, IntPtr getComponentFuncPtr);
+
+        [DllImport("modding_native", EntryPoint = "mod2_set_location_resolver")]
+        private static extern void SetLocationResolverNative(IntPtr resolverMethodInfo);
 
         private static bool _initTried;
         private static bool _ready;
@@ -74,6 +77,20 @@ namespace Modding
                 Logger.APILogger.Log(_locationHookInstalled
                     ? "Assembly.Location native hook installed."
                     : "Assembly.Location native hook failed to install.");
+                if (_locationHookInstalled)
+                {
+                    try
+                    {
+                        MethodInfo rl = typeof(NativeCompat).GetMethod(nameof(NativeCompat.ResolveLocationFallback),
+                            BindingFlags.NonPublic | BindingFlags.Static);
+                        if (rl != null)
+                        {
+                            IntPtr rlInfo = Il2CppResolver.TryGetMethodInfoPointer(rl, 1, "System.String");
+                            if (rlInfo != IntPtr.Zero) SetLocationResolverNative(rlInfo);
+                        }
+                    }
+                    catch (Exception ex2) { Logger.APILogger.LogWarn("Native location resolver setup failed: " + ex2.Message); }
+                }
             }
             catch (Exception ex) { Logger.APILogger.LogWarn("Native Location hook install failed: " + ex.Message); }
         }
@@ -91,10 +108,11 @@ namespace Modding
 
                 IntPtr addPtr = Il2CppResolver.TryGetMethodPointer(addType, 1, "System.Type");
                 IntPtr getInfo = Il2CppResolver.TryGetMethodInfoPointer(getType, 1, "System.Type");
-                Logger.APILogger.LogDebug("AddComponent hook resolve: addComponentPtr=0x" + addPtr.ToInt64().ToString("X") + " getComponentMethodInfo=0x" + getInfo.ToInt64().ToString("X"));
-                if (addPtr == IntPtr.Zero || getInfo == IntPtr.Zero) return;
+                IntPtr getPtr = Il2CppResolver.TryGetMethodPointer(getType, 1, "System.Type");
+                Logger.APILogger.LogDebug("AddComponent hook resolve: addComponentPtr=0x" + addPtr.ToInt64().ToString("X") + " getComponentMethodInfo=0x" + getInfo.ToInt64().ToString("X") + " getComponentFuncPtr=0x" + getPtr.ToInt64().ToString("X"));
+                if (addPtr == IntPtr.Zero || getPtr == IntPtr.Zero) return;
 
-                _addComponentHookInstalled = InstallAddComponentHook(addPtr, getInfo) != 0;
+                _addComponentHookInstalled = InstallAddComponentHook(addPtr, getInfo, getPtr) != 0;
                 Logger.APILogger.Log(_addComponentHookInstalled
                     ? "GameObject.AddComponent native compat hook installed."
                     : "GameObject.AddComponent native compat hook failed to install.");

@@ -180,13 +180,13 @@ if (Test-Path $extraSigsFile) {
                 if ($pcs -match '`|<>') { $skippedUnbound++; $okParams = $false; break }
                 $paramCs += $pcs
                 $rawParams += (Normalize-RawType $pcs)
-                if (Is-RefTypeString $pcs) { $nativeParamCs += 'IntPtr' } else { $nativeParamCs += $pcs }
+                $nativeParamCs += $pcs
             }
         }
         if (-not $okParams) { continue }
         if ($retCs -match '`|<>') { $skippedUnbound++; continue }
         
-        $nativeRetCs = if (Is-RefTypeString $retCs) { 'IntPtr' } else { $retCs }
+        $nativeRetCs = $retCs
 
         $sig = "$retCs|$($paramCs -join ',')"
         if ($sigCounts.ContainsKey($sig)) { $sigCounts[$sig]++ }
@@ -233,9 +233,7 @@ foreach ($path in $mmhookPaths) {
                 $csType = Convert-Type $pt.FullName
                 $paramCs += $csType
                 $rawParams += (Normalize-RawType $pt.FullName)
-                
-                $isRef = (-not $pt.IsValueType)
-                if ($isRef) { $nativeParamCs += 'IntPtr' } else { $nativeParamCs += $csType }
+                $nativeParamCs += $csType
             }
             if (-not $ok) { continue }
             if (Is-AssemblyType $invoke.ReturnType) { $skippedAssembly++; continue }
@@ -249,8 +247,7 @@ foreach ($path in $mmhookPaths) {
             $retCs = Convert-Type $retPt.FullName
             if (($retCs + ',' + ($paramCs -join ',')) -match '`|<>') { $skippedUnbound++; continue }
             
-            $isRetRef = ($retCs -ne 'void') -and (-not $retPt.IsValueType)
-            $nativeRetCs = if ($isRetRef) { 'IntPtr' } else { $retCs }
+            $nativeRetCs = $retCs
             
             $sig = "$retCs|$($paramCs -join ',')"
             if ($sigCounts.ContainsKey($sig)) {

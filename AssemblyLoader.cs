@@ -61,7 +61,7 @@ namespace Modding
                     }
                     _loadedAssemblies[fileName] = asm;
                     _loadedAssemblies[asm.GetName().Name] = asm;
-                    NativeCompat.AssemblyLocations[asm] = path;
+                    NativeCompat.RegisterAssemblyPath(asm, path);
                     NativeBridge.Register(asm, path);
                     try
                     {

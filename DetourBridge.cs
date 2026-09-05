@@ -863,11 +863,11 @@ namespace Modding
 
         static DetourBridge()
         {
-            RegisterConcreteBridge(typeof(StartSlashSlot), nameof(BridgeStartSlash), typeof(DetourAction<IntPtr>), typeof(OrigStartSlash));
-            RegisterConcreteBridge(typeof(OnDisableSlot), nameof(BridgeOnDisable), typeof(DetourAction<IntPtr>), typeof(OrigOnDisable));
-            RegisterConcreteBridge(typeof(TakeDamageSlot), nameof(BridgeTakeDamage), typeof(DetourAction<IntPtr, IntPtr, GlobalEnums.CollisionSide, int, int>), typeof(OrigTakeDamage));
-            RegisterConcreteBridge(typeof(HitSlot), nameof(BridgeHit), typeof(DetourAction<IntPtr, HitInstance>), typeof(OrigHit));
-            RegisterConcreteBridge(typeof(DieSlot), nameof(BridgeDie), typeof(DetourAction<IntPtr, DieCause, AttackTypes, bool>), typeof(OrigDie));
+            RegisterConcreteBridge(typeof(StartSlashSlot), nameof(BridgeStartSlash), typeof(DetourAction<NailSlash>), typeof(OrigStartSlash));
+            RegisterConcreteBridge(typeof(OnDisableSlot), nameof(BridgeOnDisable), typeof(DetourAction<GameManager>), typeof(OrigOnDisable));
+            RegisterConcreteBridge(typeof(TakeDamageSlot), nameof(BridgeTakeDamage), typeof(DetourAction<HeroController, UnityEngine.GameObject, GlobalEnums.CollisionSide, int, int>), typeof(OrigTakeDamage));
+            RegisterConcreteBridge(typeof(HitSlot), nameof(BridgeHit), typeof(DetourAction<HealthManager, HitInstance>), typeof(OrigHit));
+            RegisterConcreteBridge(typeof(DieSlot), nameof(BridgeDie), typeof(DetourAction<HealthManager, DieCause, AttackTypes, bool>), typeof(OrigDie));
             try { GeneratedBridges.RegisterAll(); }
             catch (Exception ex) { Logger.APILogger.LogError("GeneratedBridges.RegisterAll failed: " + ex); }
         }
@@ -971,17 +971,6 @@ namespace Modding
                 return false;
             }
 
-#if ENABLE_IL2CPP
-
-            string unimarsh = DescribeUnsupportedSignature(targetMethod);
-            if (unimarsh != null)
-            {
-                error = "target signature cannot cross a reverse-P/Invoke bridge on IL2CPP: " + unimarsh +
-                        ". Rework it around a nullable-free signature.";
-                return false;
-            }
-#endif
-
             Type concreteDelegateType = GetDelegateTypeForMethod(targetMethod, out string concreteSigErr);
             if (concreteDelegateType != null && !HasNullableParameter(targetMethod) && TryGetFreeBridge(concreteDelegateType, out ConcreteBridgeInfo cbi))
             {
@@ -1009,159 +998,13 @@ namespace Modding
                 return true;
             }
 
-            // Reject target signatures that would build an unmarshallable bridge.
-            for (int i = 0; i < targetParams.Length; i++)
-            {
-                if (IsUnmarshallableType(targetParams[i].ParameterType))
-                {
-                    error = "target has unmarshallable parameter type.";
-                    return false;
-                }
-            }
-            if (IsUnmarshallableType(targetMethod.ReturnType))
-            {
-                error = "target has unmarshallable return type.";
-                return false;
-            }
-            if (!targetMethod.IsStatic && IsUnmarshallableType(targetMethod.DeclaringType))
-            {
-                error = "target declaring type is unmarshallable.";
-                return false;
-            }
+            Logger.APILogger.LogWarn("No AOT bridge for " + targetMethod.DeclaringType?.Name + "." + targetMethod.Name);
 
-            Logger.APILogger.LogWarn("No concrete AOT bridge for " + targetMethod.DeclaringType?.Name + ".");
-
-#if ENABLE_IL2CPP
-            {
-                string gate = DescribeUnsupportedSignature(targetMethod);
-
-                bool hasNullable = false;
-                foreach (ParameterInfo p in targetParams)
-                {
-                    if (Nullable.GetUnderlyingType(p.ParameterType) != null) { hasNullable = true; break; }
-                }
-                if (gate != null || hasNullable)
-                {
-                    error = "No AOT bridge + generic fallback rejected.";
-                    return false;
-                }
-            }
-#endif
-
-            Type slot = AllocateSlot(replacement);
-
-            int extra = targetMethod.ReturnType == typeof(void) ? 1 : 2;
-            Type[] typeArgs = new Type[nativeArity + extra];
-            typeArgs[0] = slot;
-            int idx = 1;
-            if (!targetMethod.IsStatic) typeArgs[idx++] = targetMethod.DeclaringType;
-            for (int i = 0; i < targetParams.Length; i++) typeArgs[idx++] = targetParams[i].ParameterType;
-            if (targetMethod.ReturnType != typeof(void)) typeArgs[idx] = targetMethod.ReturnType;
-
-            MethodInfo bridge;
-            try
-            {
-                bridge = targetMethod.ReturnType == typeof(void)
-                    ? VoidBridges[nativeArity].MakeGenericMethod(typeArgs)
-                    : ReturningBridges[nativeArity].MakeGenericMethod(typeArgs);
-            }
-            catch (Exception ex)
-            {
-                ReleaseSlot(slot);
-                error = "failed to build bridge: " + ex.Message;
-                return false;
-            }
-
-            IntPtr targetAddr = GetNativeMethodAddress(targetMethod);
-            if (targetAddr == IntPtr.Zero) { ReleaseSlot(slot); error = "cannot get target address."; return false; }
-
-            string bridgeSigErr;
-            Type targetDelegateType = GetDelegateTypeForMethod(targetMethod, out bridgeSigErr);
-            if (targetDelegateType == null)
-            {
-                ReleaseSlot(slot);
-                error = "cannot build target delegate type: " + bridgeSigErr;
-                return false;
-            }
-
-            IntPtr bridgeAddr;
-            Delegate bridgeDel;
-            try
-            {
-                bridgeDel = Delegate.CreateDelegate(targetDelegateType, null, bridge);
-                bridgeAddr = Marshal.GetFunctionPointerForDelegate(bridgeDel);
-            }
-            catch (Exception ex)
-            {
-                ReleaseSlot(slot);
-                error = "failed to build bridge delegate/pointer: " + ex.Message;
-                return false;
-            }
-            if (bridgeAddr == IntPtr.Zero)
-            {
-                ReleaseSlot(slot);
-                error = "bridge delegate has no native function pointer.";
-                return false;
-            }
-            if (BridgeStates.TryGetValue(slot, out BridgeState bs)) bs.Bridge = bridgeDel;
-            Logger.APILogger.LogDebug("Bridge native thunk for " + targetMethod.Name + " = 0x" +
-                bridgeAddr.ToInt64().ToString("X") + " (delegate " + targetDelegateType.Name + ")");
-
-            if (targetAddr == bridgeAddr)
-            {
-                ReleaseSlot(slot);
-                error = "target and bridge share the same native address.";
-                return false;
-            }
-
-            IntPtr trampPtr;
-            try
-            {
-                DobbyHookNative(targetAddr, bridgeAddr, out trampPtr);
-            }
-            catch (Exception ex)
-            {
-                ReleaseSlot(slot);
-                error = "DobbyHook failed: " + ex.Message;
-                return false;
-            }
-            if (trampPtr == IntPtr.Zero)
-            {
-                ReleaseSlot(slot);
-                TryUnhook(targetAddr);
-                error = "DobbyHook returned null trampoline.";
-                return false;
-            }
-
-            IntPtr nativeMethod = Il2CppResolver.TryGetMethodInfoPointer(targetMethod);
-            if (nativeMethod == IntPtr.Zero)
-            {
-                ReleaseSlot(slot);
-                TryUnhook(targetAddr);
-                error = "no il2cpp MethodInfo available for " + targetMethod.Name + ".";
-                return false;
-            }
-
-            var genericAdapter = new OrigAdapter
-            {
-                Target = targetMethod,
-                NativeMethod = nativeMethod,
-                Trampoline = trampPtr,
-                InstanceCall = !targetMethod.IsStatic
-            };
-            Delegate orig = CreateManagedOrigDelegate(origParamType, targetMethod, genericAdapter);
-            if (orig == null)
-            {
-                ReleaseSlot(slot);
-                TryUnhook(targetAddr);
-                error = "failed to create orig delegate.";
-                return false;
-            }
-
-            SetSlotOrig(slot, orig);
-            Installed[targetMethod] = new InstalledHook { Target = targetMethod, Slot = slot, Orig = orig };
-            trampolineDelegate = orig;
-            return true;
+            string unsupported = DescribeUnsupportedSignature(targetMethod);
+            error = unsupported != null
+                ? "no AOT bridge registered for this signature (unsupported type: " + unsupported + ")"
+                : "no AOT bridge registered for signature of " + targetMethod.DeclaringType?.Name + "." + targetMethod.Name;
+            return false;
         }
 
         public static Delegate CreateDetour(MethodInfo targetMethod, MethodInfo replacementMethod)

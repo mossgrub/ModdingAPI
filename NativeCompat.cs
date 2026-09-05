@@ -310,6 +310,14 @@ namespace Modding
             return false;
         }
 
+        internal static string ResolveLocationFallback(string assemblyName)
+        {
+            if (string.IsNullOrEmpty(assemblyName)) return null;
+            if (NameLocations.TryGetValue(assemblyName, out string path) && !string.IsNullOrEmpty(path))
+                return path;
+            return null;
+        }
+
         public static void RegisterAssemblyPath(Assembly asm, string path)
         {
             if (asm != null && !string.IsNullOrEmpty(path))
