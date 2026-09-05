@@ -1,4 +1,4 @@
-#include "modding_native.h"
+﻿#include "modding_native.h"
 
 #include <android/log.h>
 #include <dlfcn.h>
@@ -292,8 +292,6 @@ extern "C" void mod2_set_location_resolver(void *resolverMethodInfo) {
     g_locationResolverMethodInfo = resolverMethodInfo;
 }
 
-// Asks the managed side (NativeCompat.ResolveLocationFallback) to map an assembly
-// name to the registered absolute path. Used only when every native resolve fails.
 static void *LocationResolverCall(const char *name) {
     if (!g_locationResolverMethodInfo || !g_invoke || !g_strNew || !name || !*name) return nullptr;
     void *nameStr = g_strNew(name);
@@ -301,6 +299,20 @@ static void *LocationResolverCall(const char *name) {
     void *args[1] = { nameStr };
     void *exc = nullptr;
     void *res = g_invoke(g_locationResolverMethodInfo, nullptr, args, &exc);
+    return (res && !exc) ? res : nullptr;
+}
+
+static void *g_locationResolverObjectMethodInfo = nullptr;
+
+extern "C" void mod2_set_location_resolver_object(void *resolverMethodInfo) {
+    g_locationResolverObjectMethodInfo = resolverMethodInfo;
+}
+
+static void *LocationResolverCallObject(void *asmObj) {
+    if (!g_locationResolverObjectMethodInfo || !g_invoke || !asmObj) return nullptr;
+    void *args[1] = { asmObj };
+    void *exc = nullptr;
+    void *res = g_invoke(g_locationResolverObjectMethodInfo, nullptr, args, &exc);
     return (res && !exc) ? res : nullptr;
 }
 
@@ -355,6 +367,11 @@ static void *LocationHookImpl(void *self) {
         }
         void *managed = ResolveManagedLocationFallback(self);
         if (managed) return managed;
+        void *managedObj = LocationResolverCallObject(self);
+        if (managedObj) {
+            LOGI("mod2 locobj: resolved via managed object fallback");
+            return managedObj;
+        }
         static int failLogs = 0;
         if (failLogs < 20) { ++failLogs; LOGI("mod2 locfail#%d: resolve failed for self=%p", failLogs, self); }
     }
@@ -539,8 +556,6 @@ static const char *TypeNameForLog(void *typeObj) {
     const char *oc = ObjClassNameForLog(typeObj);
     if (!oc) return "?";
 
-    // il2cpp_class_get_name returns the SHORT class name (e.g. "RuntimeType"),
-    // so compare short names so the reflection chain is actually followed.
     if (strcmp(oc, "Type") != 0 && strcmp(oc, "RuntimeType") != 0 && strcmp(oc, "MonoType") != 0) return oc;
 
     if (g_typeFromReflection && g_classFromType && g_classGetName) {
@@ -562,7 +577,13 @@ static void *AddComponentHook(void *self, void *type, void *methodInfo) {
 
     if (g_getComponentFuncPtr) {
         typedef void* (*GetComponentFn)(void*, void*, void*);
-        void *existing = ((GetComponentFn)g_getComponentFuncPtr)(self, type, g_getComponentMethodInfo);
+        void *existing = nullptr;
+        if (g_getComponentMethodInfo) {
+            existing = ((GetComponentFn)g_getComponentFuncPtr)(self, type, g_getComponentMethodInfo);
+        }
+        if (!existing) {
+            existing = ((GetComponentFn)g_getComponentFuncPtr)(self, type, nullptr);
+        }
         AddCompLog("GetComponent(%s) -> existing=%p", TypeNameForLog(type), existing);
 
         if (existing) {

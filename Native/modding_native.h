@@ -1,4 +1,4 @@
-#ifndef MODDING_NATIVE_H_
+﻿#ifndef MODDING_NATIVE_H_
 #define MODDING_NATIVE_H_
 
 #include <stdint.h>
@@ -27,6 +27,8 @@ void mod2_register_assembly_path(void *assemblyObjectPtr, const char *assemblyNa
                                  const char *absolutePath, void *assemblyNativePtr);
 
 void mod2_set_location_resolver(void *resolverMethodInfo);
+
+void mod2_set_location_resolver_object(void *resolverMethodInfo);
 
 int mod2_install_addcomponent_hook(void *addComponentMethodPtr, void *getComponentMethodInfo, void *getComponentFuncPtr);
 
