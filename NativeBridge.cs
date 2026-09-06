@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using UnityEngine;
@@ -220,6 +220,8 @@ namespace Modding
             }
         }
 
+        internal static IntPtr ObjectToPtr(object o) => ToObjectPtr(o);
+
         private static IntPtr ToObjectPtr(object o)
         {
             if (o == null) return IntPtr.Zero;
@@ -228,7 +230,7 @@ namespace Modding
             finally { if (h.IsAllocated) h.Free(); }
         }
 
-        private static object FromObjectPtr(IntPtr p)
+        internal static object FromObjectPtr(IntPtr p)
         {
             if (p == IntPtr.Zero) return null;
             var box = new object[1];

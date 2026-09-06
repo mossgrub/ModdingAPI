@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -95,6 +95,7 @@ namespace Modding
             public Delegate Bridge;
 
             public Delegate Replacement;
+            public int[] RefIndexes;
         }
 
         private static readonly ConcurrentDictionary<Type, BridgeState> BridgeStates = new ConcurrentDictionary<Type, BridgeState>();
@@ -425,53 +426,54 @@ namespace Modding
             return GetDelegateTypeForMethod(method, out _);
         }
 
-        // Some reference types from PlayMaker cannot be
-        // marshalled through a HybridCLR reverse-P/Invoke
-        private static bool IsExternalUnsafeRef(Type t)
+        // AOT bridges for reference types use IntPtr in the native signature, because some
+        // types cannot be marshalled directly through the HybridCLR reverse-P/Invoke wrapper.
+        private static bool IsRefTypeForBridge(Type t)
         {
             if (t == null) return false;
-            if (t.IsValueType || t == typeof(string) || t == typeof(IntPtr) || t == typeof(UIntPtr)) return false;
-            if (t.IsArray) return IsExternalUnsafeRef(t.GetElementType());
-            string asm = null;
-            try { asm = t.Assembly?.GetName()?.Name ?? ""; } catch { asm = ""; }
-            if (string.IsNullOrEmpty(asm)) return false;
-            if (asm.StartsWith("Assembly-CSharp")) return false;
-            if (asm.StartsWith("UnityEngine")) return false;
-            if (asm.StartsWith("System") || asm == "mscorlib" || asm == "netstandard") return false;
-            if (asm.StartsWith("MonoMod") || asm == "Mono.Cecil") return false;
-            if (asm == "Newtonsoft.Json" || asm == "HybridCLR.Runtime") return false;
+            if (t.IsPrimitive || t.IsEnum) return false;
+            if (t == typeof(string) || t == typeof(IntPtr) || t == typeof(UIntPtr)) return false;
+            if (t.IsValueType) return false;
             return true;
         }
 
-        private static bool HasExternalUnsafeRef(MethodInfo m)
-        {
-            if (m == null) return false;
-            foreach (ParameterInfo p in m.GetParameters()) { if (IsExternalUnsafeRef(p.ParameterType)) return true; }
-            return IsExternalUnsafeRef(m.ReturnType) || (!m.IsStatic && IsExternalUnsafeRef(m.DeclaringType));
-        }
-
-        private static Type BuildRealDelegateTypeForMethod(MethodInfo method, out string error)
+        private static Type BuildPtrDelegateTypeForMethod(MethodInfo method, out int[] refIndexes, out string error)
         {
             error = null;
+            refIndexes = null;
             if (method == null) { error = "null method"; return null; }
             var ps = method.GetParameters();
             int arity = ps.Length + (method.IsStatic ? 0 : 1);
             if (arity > MaxArgs) { error = "unsupported arity " + arity; return null; }
+
+            var typeArgs = new Type[arity];
+            var refs = new List<int>();
+            int idx = 0;
+            if (!method.IsStatic)
+            {
+                Type t = method.DeclaringType;
+                if (IsRefTypeForBridge(t)) { typeArgs[idx] = typeof(IntPtr); refs.Add(idx); }
+                else typeArgs[idx] = t;
+                idx++;
+            }
             for (int i = 0; i < ps.Length; i++)
             {
-                if (ps[i].ParameterType.IsByRef) { error = "byref parameter not supported"; return null; }
+                Type t = ps[i].ParameterType;
+                if (t.IsByRef) { error = "byref parameter not supported"; return null; }
+                if (Nullable.GetUnderlyingType(t) == typeof(float)) t = typeof(DieCause);
+                if (IsRefTypeForBridge(t)) { typeArgs[idx] = typeof(IntPtr); refs.Add(idx); }
+                else typeArgs[idx] = t;
+                idx++;
             }
-            var typeArgs = new Type[arity];
-            int idx = 0;
-            if (!method.IsStatic) typeArgs[idx++] = method.DeclaringType;
-            for (int i = 0; i < ps.Length; i++) typeArgs[idx++] = ps[i].ParameterType;
+            if (refs.Count > 0) refIndexes = refs.ToArray();
+
             try
             {
                 if (method.ReturnType == typeof(void))
                     return VoidDelegateTypes[arity].MakeGenericType(typeArgs);
                 var r = new Type[arity + 1];
                 Array.Copy(typeArgs, 0, r, 0, arity);
-                r[arity] = method.ReturnType;
+                r[arity] = IsRefTypeForBridge(method.ReturnType) ? typeof(IntPtr) : method.ReturnType;
                 return ReturningDelegateTypes[arity].MakeGenericType(r);
             }
             catch (Exception ex) { error = ex.Message; return null; }
@@ -599,6 +601,15 @@ namespace Modding
                 return;
 
             int argLen = args != null ? args.Length : 0;
+            if (argLen > 0 && st.RefIndexes != null)
+            {
+                for (int i = 0; i < st.RefIndexes.Length; i++)
+                {
+                    int ri = st.RefIndexes[i];
+                    if (ri >= 0 && ri < argLen && args[ri] is IntPtr p)
+                        args[ri] = p == IntPtr.Zero ? null : NativeBridge.FromObjectPtr(p);
+                }
+            }
             object[] full = new object[argLen + 1];
             full[0] = st.Orig;
             if (argLen > 0)
@@ -639,6 +650,15 @@ namespace Modding
                 return default;
 
             int argLen = args != null ? args.Length : 0;
+            if (argLen > 0 && st.RefIndexes != null)
+            {
+                for (int i = 0; i < st.RefIndexes.Length; i++)
+                {
+                    int ri = st.RefIndexes[i];
+                    if (ri >= 0 && ri < argLen && args[ri] is IntPtr p)
+                        args[ri] = p == IntPtr.Zero ? null : NativeBridge.FromObjectPtr(p);
+                }
+            }
             object[] full = new object[argLen + 1];
             full[0] = st.Orig;
             if (argLen > 0)
@@ -674,6 +694,12 @@ namespace Modding
             }
 
             return invoked ? result : default;
+        }
+
+        internal static IntPtr InvokeBridgePtr<TSlot>(object[] args)
+        {
+            object result = InvokeBridgeR<object, TSlot>(args);
+            return result == null ? IntPtr.Zero : NativeBridge.ObjectToPtr(result);
         }
 
         private static void BridgeV0<TSlot>() => InvokeBridge<TSlot>(Array.Empty<object>());
@@ -754,12 +780,12 @@ namespace Modding
         // Generic installer for a concrete reverse-pinvoke bridge. <paramref name="concreteBridge"/>
         // must be a non-generic static method annotated with [AOT.MonoPInvokeCallback(typeof(delegateType))]
         public static bool TryInstallConcreteDetour(MethodInfo target, Type slotType, Type delegateType, Type origType,
-            MethodInfo concreteBridge, Delegate replacement, out Delegate orig, out string error)
+            MethodInfo concreteBridge, Delegate replacement, int[] refIndexes, out Delegate orig, out string error)
         {
             orig = null;
             error = null;
 
-            BridgeStates[slotType] = new BridgeState { Handlers = new List<Delegate> { replacement } };
+            BridgeStates[slotType] = new BridgeState { Handlers = new List<Delegate> { replacement }, RefIndexes = refIndexes };
 
             IntPtr targetAddr = GetNativeMethodAddress(target);
             if (targetAddr == IntPtr.Zero) { error = "cannot get target address."; return false; }
@@ -851,7 +877,7 @@ namespace Modding
             if (getLocation == null) { error = "Assembly.get_Location not found."; return false; }
             return TryInstallConcreteDetour(
                 getLocation, typeof(LocationSlot), typeof(Func<Assembly, string>),
-                typeof(OrigGetLocation), LocationBridgeMethod, replacement, out _, out error);
+                typeof(OrigGetLocation), LocationBridgeMethod, replacement, null, out _, out error);
         }
 
         #region concrete bridges (MonoPInvokeCallback) for game hooks routed via On.*
@@ -864,32 +890,32 @@ namespace Modding
         private sealed class HitSlot { }
         private sealed class DieSlot { }
 
-        [AOT.MonoPInvokeCallback(typeof(DetourAction<NailSlash>))]
-        private static void BridgeStartSlash(NailSlash a0)
+        [AOT.MonoPInvokeCallback(typeof(DetourAction<IntPtr>))]
+        private static void BridgeStartSlash(IntPtr a0)
         {
             InvokeBridge<StartSlashSlot>(new object[] { a0 });
         }
 
-        [AOT.MonoPInvokeCallback(typeof(DetourAction<GameManager>))]
-        private static void BridgeOnDisable(GameManager a0)
+        [AOT.MonoPInvokeCallback(typeof(DetourAction<IntPtr>))]
+        private static void BridgeOnDisable(IntPtr a0)
         {
             InvokeBridge<OnDisableSlot>(new object[] { a0 });
         }
 
-        [AOT.MonoPInvokeCallback(typeof(DetourAction<HeroController, UnityEngine.GameObject, GlobalEnums.CollisionSide, int, int>))]
-        private static void BridgeTakeDamage(HeroController a0, UnityEngine.GameObject a1, GlobalEnums.CollisionSide a2, int a3, int a4)
+        [AOT.MonoPInvokeCallback(typeof(DetourAction<IntPtr, IntPtr, GlobalEnums.CollisionSide, int, int>))]
+        private static void BridgeTakeDamage(IntPtr a0, IntPtr a1, GlobalEnums.CollisionSide a2, int a3, int a4)
         {
             InvokeBridge<TakeDamageSlot>(new object[] { a0, a1, a2, a3, a4 });
         }
 
-        [AOT.MonoPInvokeCallback(typeof(DetourAction<HealthManager, HitInstance>))]
-        private static void BridgeHit(HealthManager a0, HitInstance a1)
+        [AOT.MonoPInvokeCallback(typeof(DetourAction<IntPtr, IntPtr>))]
+        private static void BridgeHit(IntPtr a0, IntPtr a1)
         {
             InvokeBridge<HitSlot>(new object[] { a0, a1 });
         }
 
-        [AOT.MonoPInvokeCallback(typeof(DetourAction<HealthManager, DieCause, AttackTypes, bool>))]
-        private static void BridgeDie(HealthManager a0, DieCause a1, AttackTypes a2, bool a3)
+        [AOT.MonoPInvokeCallback(typeof(DetourAction<IntPtr, DieCause, AttackTypes, bool>))]
+        private static void BridgeDie(IntPtr a0, DieCause a1, AttackTypes a2, bool a3)
         {
             InvokeBridge<DieSlot>(new object[] { a0, UnwrapDieCause(a1), a2, a3 });
         }
@@ -909,11 +935,11 @@ namespace Modding
 
         static DetourBridge()
         {
-            RegisterConcreteBridge(typeof(StartSlashSlot), nameof(BridgeStartSlash), typeof(DetourAction<NailSlash>), typeof(OrigStartSlash));
-            RegisterConcreteBridge(typeof(OnDisableSlot), nameof(BridgeOnDisable), typeof(DetourAction<GameManager>), typeof(OrigOnDisable));
-            RegisterConcreteBridge(typeof(TakeDamageSlot), nameof(BridgeTakeDamage), typeof(DetourAction<HeroController, UnityEngine.GameObject, GlobalEnums.CollisionSide, int, int>), typeof(OrigTakeDamage));
-            RegisterConcreteBridge(typeof(HitSlot), nameof(BridgeHit), typeof(DetourAction<HealthManager, HitInstance>), typeof(OrigHit));
-            RegisterConcreteBridge(typeof(DieSlot), nameof(BridgeDie), typeof(DetourAction<HealthManager, DieCause, AttackTypes, bool>), typeof(OrigDie));
+            RegisterConcreteBridge(typeof(StartSlashSlot), nameof(BridgeStartSlash), typeof(DetourAction<IntPtr>), typeof(OrigStartSlash));
+            RegisterConcreteBridge(typeof(OnDisableSlot), nameof(BridgeOnDisable), typeof(DetourAction<IntPtr>), typeof(OrigOnDisable));
+            RegisterConcreteBridge(typeof(TakeDamageSlot), nameof(BridgeTakeDamage), typeof(DetourAction<IntPtr, IntPtr, GlobalEnums.CollisionSide, int, int>), typeof(OrigTakeDamage));
+            RegisterConcreteBridge(typeof(HitSlot), nameof(BridgeHit), typeof(DetourAction<IntPtr, IntPtr>), typeof(OrigHit));
+            RegisterConcreteBridge(typeof(DieSlot), nameof(BridgeDie), typeof(DetourAction<IntPtr, DieCause, AttackTypes, bool>), typeof(OrigDie));
             try { GeneratedBridges.RegisterAll(); }
             catch (Exception ex) { Logger.APILogger.LogError("GeneratedBridges.RegisterAll failed: " + ex); }
         }
@@ -1017,52 +1043,17 @@ namespace Modding
                 return false;
             }
 
-            if (HasExternalUnsafeRef(targetMethod))
-            {
-                error = "target signature uses a reference type from an external plugin assembly " +
-                        "(not safely marshallable through the IL2CPP reverse-P/Invoke bridge).";
-                Logger.APILogger.LogWarn("Skipping hook for " + targetMethod.DeclaringType?.Name + "." +
-                    targetMethod.Name + ": " + error);
-                return false;
-            }
-
-            Type concreteDelegateType = GetDelegateTypeForMethod(targetMethod, out string concreteSigErr);
-            if (concreteDelegateType != null && !HasNullableParameter(targetMethod) && TryGetFreeBridge(concreteDelegateType, out ConcreteBridgeInfo cbi))
+            Type ptrDelegateType = BuildPtrDelegateTypeForMethod(targetMethod, out int[] refIndexes, out _);
+            if (ptrDelegateType != null && TryGetFreeBridge(ptrDelegateType, out ConcreteBridgeInfo ptrCbi))
             {
                 Delegate origDelegate;
-                if (!TryInstallConcreteDetour(targetMethod, cbi.Slot, concreteDelegateType, cbi.OrigType, cbi.Bridge, replacement, out origDelegate, out error))
+                if (!TryInstallConcreteDetour(targetMethod, ptrCbi.Slot, ptrDelegateType, ptrCbi.OrigType, ptrCbi.Bridge,
+                    replacement, refIndexes, out origDelegate, out error))
                 {
                     return false;
                 }
-                Installed[targetMethod] = new InstalledHook { Target = targetMethod, Slot = cbi.Slot, Orig = origDelegate };
+                Installed[targetMethod] = new InstalledHook { Target = targetMethod, Slot = ptrCbi.Slot, Orig = origDelegate };
                 trampolineDelegate = origDelegate;
-                return true;
-            }
-
-            if (HasNullableParameter(targetMethod) &&
-                GetFlattenDelegateTypeForMethod(targetMethod, out _) is Type flatDelegateType &&
-                flatDelegateType != null && TryGetFreeBridge(flatDelegateType, out ConcreteBridgeInfo flatCbi))
-            {
-                Delegate origDelegate2;
-                if (!TryInstallConcreteDetour(targetMethod, flatCbi.Slot, flatDelegateType, flatCbi.OrigType, flatCbi.Bridge, replacement, out origDelegate2, out error))
-                {
-                    return false;
-                }
-                Installed[targetMethod] = new InstalledHook { Target = targetMethod, Slot = flatCbi.Slot, Orig = origDelegate2 };
-                trampolineDelegate = origDelegate2;
-                return true;
-            }
-
-            Type realDelegateType = BuildRealDelegateTypeForMethod(targetMethod, out _);
-            if (realDelegateType != null && TryGetFreeBridge(realDelegateType, out ConcreteBridgeInfo realCbi))
-            {
-                Delegate origDelegate3;
-                if (!TryInstallConcreteDetour(targetMethod, realCbi.Slot, realDelegateType, realCbi.OrigType, realCbi.Bridge, replacement, out origDelegate3, out error))
-                {
-                    return false;
-                }
-                Installed[targetMethod] = new InstalledHook { Target = targetMethod, Slot = realCbi.Slot, Orig = origDelegate3 };
-                trampolineDelegate = origDelegate3;
                 return true;
             }
 

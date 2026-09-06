@@ -180,13 +180,13 @@ if (Test-Path $extraSigsFile) {
                 if ($pcs -match '`|<>') { $skippedUnbound++; $okParams = $false; break }
                 $paramCs += $pcs
                 $rawParams += (Normalize-RawType $pcs)
-                $nativeParamCs += $pcs
+                if (Is-RefTypeString $pcs) { $nativeParamCs += 'IntPtr' } else { $nativeParamCs += $pcs }
             }
         }
         if (-not $okParams) { continue }
         if ($retCs -match '`|<>') { $skippedUnbound++; continue }
         
-        $nativeRetCs = $retCs
+        $nativeRetCs = if (Is-RefTypeString $retCs) { 'IntPtr' } else { $retCs }
 
         $sig = "$retCs|$($paramCs -join ',')"
         if ($sigCounts.ContainsKey($sig)) { $sigCounts[$sig]++ }
@@ -233,7 +233,9 @@ foreach ($path in $mmhookPaths) {
                 $csType = Convert-Type $pt.FullName
                 $paramCs += $csType
                 $rawParams += (Normalize-RawType $pt.FullName)
-                $nativeParamCs += $csType
+
+                $isRef = (-not $pt.IsValueType)
+                if ($isRef) { $nativeParamCs += 'IntPtr' } else { $nativeParamCs += $csType }
             }
             if (-not $ok) { continue }
             if (Is-AssemblyType $invoke.ReturnType) { $skippedAssembly++; continue }
@@ -247,7 +249,7 @@ foreach ($path in $mmhookPaths) {
             $retCs = Convert-Type $retPt.FullName
             if (($retCs + ',' + ($paramCs -join ',')) -match '`|<>') { $skippedUnbound++; continue }
             
-            $nativeRetCs = $retCs
+            $nativeRetCs = if (Is-RefTypeString $retCs) { 'IntPtr' } else { $retCs }
             
             $sig = "$retCs|$($paramCs -join ',')"
             if ($sigCounts.ContainsKey($sig)) {
@@ -388,7 +390,11 @@ for ($chunkIndex = 0; $chunkIndex -lt $totalChunks; $chunkIndex++) {
                 [void]$sb.AppendLine("        [AOT.MonoPInvokeCallback(typeof($delType))]")
                 [void]$sb.AppendLine("        private static $nativeRet $bridgeName($($sigParamDecl -join ', '))")
                 [void]$sb.AppendLine("        {")
-                [void]$sb.AppendLine("            return DetourBridge.InvokeBridgeR<$nativeRet, $slotName>($objArray);")
+                if ($nativeRet -eq 'IntPtr') {
+                    [void]$sb.AppendLine("            return DetourBridge.InvokeBridgePtr<$slotName>($objArray);")
+                } else {
+                    [void]$sb.AppendLine("            return DetourBridge.InvokeBridgeR<$nativeRet, $slotName>($objArray);")
+                }
                 [void]$sb.AppendLine("        }")
             }
 
