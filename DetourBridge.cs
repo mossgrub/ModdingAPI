@@ -252,8 +252,6 @@ namespace Modding
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         public delegate R DetourFunc<A0, A1, A2, A3, A4, A5, R>(A0 a0, A1 a1, A2 a2, A3 a3, A4 a4, A5 a5);
 
-
-        // Each On.* signature therefore needs one concrete non-generic delegate type 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         public delegate void OrigStartSlash(NailSlash a0);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -425,6 +423,31 @@ namespace Modding
         public static Type GetDelegateTypeForMethod(MethodInfo method)
         {
             return GetDelegateTypeForMethod(method, out _);
+        }
+
+        // Some reference types from PlayMaker cannot be
+        // marshalled through a HybridCLR reverse-P/Invoke
+        private static bool IsExternalUnsafeRef(Type t)
+        {
+            if (t == null) return false;
+            if (t.IsValueType || t == typeof(string) || t == typeof(IntPtr) || t == typeof(UIntPtr)) return false;
+            if (t.IsArray) return IsExternalUnsafeRef(t.GetElementType());
+            string asm = null;
+            try { asm = t.Assembly?.GetName()?.Name ?? ""; } catch { asm = ""; }
+            if (string.IsNullOrEmpty(asm)) return false;
+            if (asm.StartsWith("Assembly-CSharp")) return false;
+            if (asm.StartsWith("UnityEngine")) return false;
+            if (asm.StartsWith("System") || asm == "mscorlib" || asm == "netstandard") return false;
+            if (asm.StartsWith("MonoMod") || asm == "Mono.Cecil") return false;
+            if (asm == "Newtonsoft.Json" || asm == "HybridCLR.Runtime") return false;
+            return true;
+        }
+
+        private static bool HasExternalUnsafeRef(MethodInfo m)
+        {
+            if (m == null) return false;
+            foreach (ParameterInfo p in m.GetParameters()) { if (IsExternalUnsafeRef(p.ParameterType)) return true; }
+            return IsExternalUnsafeRef(m.ReturnType) || (!m.IsStatic && IsExternalUnsafeRef(m.DeclaringType));
         }
 
         private static Type BuildRealDelegateTypeForMethod(MethodInfo method, out string error)
@@ -991,6 +1014,15 @@ namespace Modding
             if (replParams.Length - 1 != nativeArity)
             {
                 error = "signature mismatch (replacement arity " + (replParams.Length - 1) + " vs target " + nativeArity + ").";
+                return false;
+            }
+
+            if (HasExternalUnsafeRef(targetMethod))
+            {
+                error = "target signature uses a reference type from an external plugin assembly " +
+                        "(not safely marshallable through the IL2CPP reverse-P/Invoke bridge).";
+                Logger.APILogger.LogWarn("Skipping hook for " + targetMethod.DeclaringType?.Name + "." +
+                    targetMethod.Name + ": " + error);
                 return false;
             }
 

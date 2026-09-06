@@ -50,14 +50,7 @@ namespace Modding
                 {
                     if (_useHybridCLR)
                     {
-                        try
-                        {
-                            EmbeddedResourceExtractor.Extract(path);
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.APILogger.LogWarn($"EmbeddedResourceExtractor error for `{path}`: {ex.Message}");
-                        }
+                        // Removed EmbeddedResourceExtractor.Extract
                     }
                     _loadedAssemblies[fileName] = asm;
                     _loadedAssemblies[asm.GetName().Name] = asm;

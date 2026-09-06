@@ -29,6 +29,45 @@ namespace Modding
             return TryGetMethodPointer(method, -1, (string[])null);
         }
 
+        // Resolves a native method pointer for a constructor (GameObject::.ctor(string) etc.).
+        // IL2CPP exposes ctors under the name ".ctor".
+        public static IntPtr TryGetConstructorPointer(ConstructorInfo ctor, int paramCountHint, string paramTypeName)
+        {
+            if (ctor?.DeclaringType == null) return IntPtr.Zero;
+            string ns = ctor.DeclaringType.Namespace ?? string.Empty;
+            string typeName = ctor.DeclaringType.Name;
+            string[] paramTypes = string.IsNullOrEmpty(paramTypeName) ? null : new string[] { paramTypeName };
+
+            foreach (string lib in LibNames)
+            {
+                try
+                {
+                    Api api = GetApi(lib);
+                    if (api == null) continue;
+
+                    IntPtr mi = ResolveMethodInfo(api, lib, ns, typeName, ".ctor", paramCountHint, paramTypes);
+                    if (mi == IntPtr.Zero)
+                        mi = ResolveMethodInfo(api, lib, ns, typeName, "ctor", paramCountHint, paramTypes);
+                    if (mi != IntPtr.Zero)
+                    {
+                        IntPtr p = Marshal.ReadIntPtr(mi, MethodPointerOffset);
+                        if (p != IntPtr.Zero)
+                        {
+                            Logger.APILogger.LogDebug(
+                                "IL2CPP resolver returned native address 0x" + p.ToInt64().ToString("X") +
+                                " for " + typeName + ".ctor (filtered)");
+                            return p;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.APILogger.LogDebug("il2cpp ctor resolver error on " + lib + ": " + ex.Message);
+                }
+            }
+            return IntPtr.Zero;
+        }
+
         public static IntPtr TryGetMethodPointer(MethodInfo method, int paramCountHint, string paramTypeName)
         {
             string[] paramTypes = string.IsNullOrEmpty(paramTypeName) ? null : new string[] { paramTypeName };

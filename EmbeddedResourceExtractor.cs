@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using Mono.Cecil;
 using UnityEngine;
@@ -173,6 +174,60 @@ namespace Modding
                 }
             }
             catch { return null; }
+        }
+
+        internal static Stream GetManifestResourceStream(Assembly asm, string name)
+        {
+            if (asm == null || string.IsNullOrEmpty(name)) return null;
+            if (!NativeCompat.TryGetAssemblyPath(asm, out string path) || string.IsNullOrEmpty(path) || !File.Exists(path))
+                return null;
+
+            try
+            {
+                using (AssemblyDefinition asmDef = AssemblyDefinition.ReadAssembly(path, CreateReaderParams()))
+                {
+                    if (asmDef?.MainModule?.Resources == null) return null;
+                    foreach (Resource res in asmDef.MainModule.Resources)
+                    {
+                        if (!(res is EmbeddedResource er)) continue;
+                        if (string.Equals(er.Name, name, StringComparison.OrdinalIgnoreCase))
+                        {
+                            byte[] data = er.GetResourceData();
+                            if (data != null && data.Length > 0) return new MemoryStream(data, writable: false);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogWarn($"Resource helper stream failed for `{name}`: {ex.Message}");
+            }
+            return null;
+        }
+
+        internal static string[] GetManifestResourceNames(Assembly asm)
+        {
+            if (asm == null) return Array.Empty<string>();
+            if (!NativeCompat.TryGetAssemblyPath(asm, out string path) || string.IsNullOrEmpty(path) || !File.Exists(path))
+                return Array.Empty<string>();
+
+            var names = new List<string>();
+            try
+            {
+                using (AssemblyDefinition asmDef = AssemblyDefinition.ReadAssembly(path, CreateReaderParams()))
+                {
+                    if (asmDef?.MainModule?.Resources == null) return Array.Empty<string>();
+                    foreach (Resource res in asmDef.MainModule.Resources)
+                    {
+                        if (res is EmbeddedResource er) names.Add(er.Name);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogWarn($"Resource helper names failed: {ex.Message}");
+            }
+            return names.ToArray();
         }
 
         private static ReaderParameters CreateReaderParams()

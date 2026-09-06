@@ -42,10 +42,18 @@ namespace Modding
         [DllImport("modding_native", EntryPoint = "mod2_set_location_resolver_object")]
         private static extern void SetLocationResolverObjectNative(IntPtr resolverMethodInfo);
 
+        [DllImport("modding_native", EntryPoint = "mod2_install_resource_hooks")]
+        private static extern int InstallResourceHooksNative(
+            IntPtr targetStreamPtr, IntPtr targetNamesPtr, IntPtr helperStreamMethod, IntPtr helperNamesMethod);
+
+        [DllImport("modding_native", EntryPoint = "mod2_install_gameobject_ctor_hook")]
+        private static extern int InstallGameObjectCtorHookNative(IntPtr ctorTargetAddr);
+
         private static bool _initTried;
         private static bool _ready;
         private static bool _locationHookInstalled;
         private static bool _addComponentHookInstalled;
+        private static bool _resourceHooksInstalled;
 
         internal static bool Ready => _ready;
 
@@ -127,6 +135,68 @@ namespace Modding
                     : "GameObject.AddComponent native compat hook failed to install.");
             }
             catch (Exception ex) { Logger.APILogger.LogWarn("Native AddComponent hook install failed: " + ex.Message); }
+        }
+
+        private static bool _gameObjectCtorInstalled;
+
+        internal static void EnsureGameObjectCtorHook()
+        {
+            if (_gameObjectCtorInstalled || !_ready) return;
+            try
+            {
+                // GameObject(string name, params Type[] components)
+                System.Reflection.ConstructorInfo ctor = typeof(GameObject).GetConstructor(
+                    new System.Type[] { typeof(string), typeof(System.Type[]) });
+                if (ctor == null) return;
+
+                IntPtr ctorPtr = Il2CppResolver.TryGetConstructorPointer(ctor, 2, null);
+                if (ctorPtr == IntPtr.Zero)
+                {
+                    Logger.APILogger.LogWarn("GameObject(string, params Type[]) ctor address not found.");
+                    return;
+                }
+
+                _gameObjectCtorInstalled = InstallGameObjectCtorHookNative(ctorPtr) != 0;
+                Logger.APILogger.Log(_gameObjectCtorInstalled
+                    ? "GameObject(string, params Type[]) ctor hook installed."
+                    : "GameObject(string, params Type[]) ctor hook failed to install.");
+            }
+            catch (Exception ex) { Logger.APILogger.LogWarn("GameObject ctor hook install failed: " + ex.Message); }
+        }
+
+        internal static void EnsureResourceHooks()
+        {
+            if (_resourceHooksInstalled || !_ready) return;
+            try
+            {
+                MethodInfo streamM = typeof(Assembly).GetMethod("GetManifestResourceStream",
+                    BindingFlags.Public | BindingFlags.Instance, null, new Type[] { typeof(string) }, null);
+                MethodInfo namesM = typeof(Assembly).GetMethod("GetManifestResourceNames",
+                    BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                if (streamM == null || namesM == null) return;
+
+                IntPtr streamPtr = Il2CppResolver.TryGetMethodPointer(streamM, 1, "System.String");
+                IntPtr namesPtr = Il2CppResolver.TryGetMethodPointer(namesM, 0, (string)null);
+                if (streamPtr == IntPtr.Zero || namesPtr == IntPtr.Zero) return;
+
+                MethodInfo hStream = typeof(EmbeddedResourceExtractor).GetMethod(
+                    nameof(EmbeddedResourceExtractor.GetManifestResourceStream),
+                    BindingFlags.NonPublic | BindingFlags.Static);
+                MethodInfo hNames = typeof(EmbeddedResourceExtractor).GetMethod(
+                    nameof(EmbeddedResourceExtractor.GetManifestResourceNames),
+                    BindingFlags.NonPublic | BindingFlags.Static);
+                if (hStream == null || hNames == null) return;
+
+                IntPtr hStreamInfo = Il2CppResolver.TryGetMethodInfoPointer(hStream, 2, "System.Reflection.Assembly");
+                IntPtr hNamesInfo = Il2CppResolver.TryGetMethodInfoPointer(hNames, 1, "System.Reflection.Assembly");
+                if (hStreamInfo == IntPtr.Zero || hNamesInfo == IntPtr.Zero) return;
+
+                _resourceHooksInstalled = InstallResourceHooksNative(streamPtr, namesPtr, hStreamInfo, hNamesInfo) != 0;
+                Logger.APILogger.Log(_resourceHooksInstalled
+                    ? "Assembly resource compat hooks installed."
+                    : "Assembly resource compat hooks failed to install.");
+            }
+            catch (Exception ex) { Logger.APILogger.LogWarn("Native resource hooks install failed: " + ex.Message); }
         }
 
         internal static void Register(Assembly asm, string path)

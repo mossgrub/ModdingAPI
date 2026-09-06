@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Reflection;
@@ -35,6 +35,8 @@ namespace Modding
             InstallHookEndpointRedirect();
             NativeBridge.EnsureLocationHook();
             NativeBridge.EnsureAddComponentHook();
+            NativeBridge.EnsureGameObjectCtorHook();
+            NativeBridge.EnsureResourceHooks();
         }
 
         private static bool IsIl2Cpp
