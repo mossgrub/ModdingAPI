@@ -72,10 +72,12 @@ DomainAssembliesFn g_domainAsm      = nullptr;
 typedef void *(*Il2CppTypeFromReflectionFn)(void *reflectionType);
 typedef void *(*Il2CppClassFromTypeFn)(void *type);
 typedef const char *(*Il2CppClassGetNameFn)(void *klass);
+typedef uintptr_t (*Il2CppArrayLengthFn)(void *array);
 
 Il2CppTypeFromReflectionFn g_typeFromReflection = nullptr;
 Il2CppClassFromTypeFn       g_classFromType       = nullptr;
 Il2CppClassGetNameFn        g_classGetName        = nullptr;
+Il2CppArrayLengthFn         g_arrayLength         = nullptr;
 
 typedef int (*DobbyHookFn)(void *target, void *replacement, void **outTrampoline);
 typedef int (*DobbyDestroyFn)(void *target);
@@ -135,7 +137,6 @@ const char *FindPathByName(const char *name) {
 }
 
 const char *FindPathByDomainName(const char *nameHint) {
-    if (!nameHint || !*nameHint) return nullptr;
     if (!g_domainGet || !g_domainAsm || !g_asmGetImage || !g_imgGetName) return nullptr;
     
     void *domain = g_domainGet();
@@ -154,7 +155,7 @@ const char *FindPathByDomainName(const char *nameHint) {
         const char *imgName = g_imgGetName(img);
         if (!imgName || !*imgName) continue;
         
-        if (NameMatches(imgName, nameHint)) {
+        if (!nameHint || NameMatches(imgName, nameHint)) {
             for (int i = 0; i < gPathCount; ++i) {
                 if (NameMatches(imgName, gNames[i])) { 
                     result = gPaths[i]; 
@@ -282,6 +283,9 @@ static const char *ResolvePathFromAssemblyObject(void *self) {
         p = FindPathByDomainName(nm);
         if (p && *p) return p;
     }
+
+    p = FindPathByDomainName(nullptr);
+    if (p && *p) return p;
 
     return nullptr;
 }
@@ -422,6 +426,7 @@ int mod2_init(void) {
     g_typeFromReflection = (Il2CppTypeFromReflectionFn)dlsym(h, "il2cpp_type_from_reflection");
     g_classFromType       = (Il2CppClassFromTypeFn)dlsym(h, "il2cpp_class_from_type");
     g_classGetName        = (Il2CppClassGetNameFn)dlsym(h, "il2cpp_class_get_name");
+    g_arrayLength         = (Il2CppArrayLengthFn)dlsym(h, "il2cpp_array_length");
     LOGI("mod2_init: type_from_reflection=%p class_from_type=%p class_get_name=%p", (void*)g_typeFromReflection, (void*)g_classFromType, (void*)g_classGetName);
 
     g_ready = true;
@@ -613,6 +618,104 @@ int mod2_install_addcomponent_hook(void *addComponentMethodPtr, void *getCompone
     if (!g_addComponentInstalled) LOGE("GameObject.AddComponent DobbyHook failed rc=%d", rc);
     else LOGI("GameObject.AddComponent native compat hook installed.");
     return g_addComponentInstalled ? 1 : 0;
+}
+
+// GameObject(string, params Type[])
+typedef struct { void *klass; void *monitor; } Il2CppObjectHeaderCompat;
+typedef struct { Il2CppObjectHeaderCompat obj; void *bounds; uintptr_t max_length; void *vector[8]; } Il2CppArrayHeaderCompat;
+static Il2CppArrayHeaderCompat g_emptyComponentsArray;
+
+static void *g_gameObjectCtorTarget     = nullptr;
+static void *g_gameObjectCtorOrig       = nullptr;
+static bool  g_gameObjectCtorInstalled  = false;
+
+static void GameObjectCtorHook(void *self, void *name, void *componentsArray, void *methodInfo) {
+    if (!self) return;
+    if (g_gameObjectCtorOrig) {
+        typedef void (*GameObjectCtorFn)(void*, void*, void*, void*);
+        ((GameObjectCtorFn)g_gameObjectCtorOrig)(self, name, &g_emptyComponentsArray, methodInfo);
+    }
+    if (!componentsArray) return;
+    Il2CppArrayHeaderCompat *arr = (Il2CppArrayHeaderCompat*)componentsArray;
+    uintptr_t length = arr->max_length;
+    for (uintptr_t i = 0; i < length && i < 8; ++i) {
+        void *typeObj = arr->vector[i];
+        if (typeObj) {
+            AddCompLog("ctor add component %s", TypeNameForLog(typeObj));
+            AddComponentHook(self, typeObj, nullptr);
+        }
+    }
+}
+
+int mod2_install_gameobject_ctor_hook(void *ctorTargetAddr) {
+    if (g_gameObjectCtorInstalled) return 1;
+    if (!ctorTargetAddr || !g_ready) return 0;
+    g_gameObjectCtorTarget = ctorTargetAddr;
+    int rc = g_dobbyHook(ctorTargetAddr, (void *)GameObjectCtorHook, (void **)&g_gameObjectCtorOrig);
+    g_gameObjectCtorInstalled = (rc == 0);
+    if (!g_gameObjectCtorInstalled) LOGE("GameObject ctor hook failed rc=%d", rc);
+    else LOGI("GameObject(string, params Type[]) ctor hook installed.");
+    return g_gameObjectCtorInstalled ? 1 : 0;
+}
+
+// Assembly.GetManifestResourceStream / GetManifestResourceNames
+static void *g_helperStreamMethod = nullptr;
+static void *g_helperNamesMethod  = nullptr;
+static void *g_origGetResourceStream = nullptr;
+static void *g_origGetResourceNames  = nullptr;
+static bool  g_resourceHooksInstalled = false;
+
+static void *ResourceStreamHook(void *self, void *nameStr) {
+    if (!nameStr) return nullptr;
+    void *origResult = nullptr;
+    if (g_origGetResourceStream) {
+        typedef void* (*Func)(void*, void*);
+        origResult = ((Func)g_origGetResourceStream)(self, nameStr);
+    }
+    if (origResult) return origResult;
+    if (g_helperStreamMethod && g_invoke && self) {
+        void *args[2] = { self, nameStr };
+        void *exc = nullptr;
+        void *helperRes = g_invoke(g_helperStreamMethod, nullptr, args, &exc);
+        if (!exc && helperRes) return helperRes;
+    }
+    return nullptr;
+}
+
+static void *ResourceNamesHook(void *self) {
+    void *origResult = nullptr;
+    if (g_origGetResourceNames) {
+        typedef void* (*Func)(void*);
+        origResult = ((Func)g_origGetResourceNames)(self);
+    }
+    bool isEmpty = true;
+    if (origResult && g_arrayLength) {
+        if (g_arrayLength(origResult) > 0) { isEmpty = false; }
+    } else if (origResult && !g_arrayLength) {
+        isEmpty = false;
+    }
+    if (!isEmpty) return origResult;
+    if (g_helperNamesMethod && g_invoke && self) {
+        void *args[1] = { self };
+        void *exc = nullptr;
+        void *helperRes = g_invoke(g_helperNamesMethod, nullptr, args, &exc);
+        if (!exc && helperRes) return helperRes;
+    }
+    return origResult;
+}
+
+int mod2_install_resource_hooks(void *targetStreamPtr, void *targetNamesPtr,
+                                void *helperStreamMethod, void *helperNamesMethod) {
+    if (g_resourceHooksInstalled) return 1;
+    if (!g_dobbyHook || !targetStreamPtr || !targetNamesPtr || !g_ready) return 0;
+    g_helperStreamMethod = helperStreamMethod;
+    g_helperNamesMethod  = helperNamesMethod;
+    int rc1 = g_dobbyHook(targetStreamPtr, (void *)ResourceStreamHook, (void **)&g_origGetResourceStream);
+    int rc2 = g_dobbyHook(targetNamesPtr, (void *)ResourceNamesHook, (void **)&g_origGetResourceNames);
+    g_resourceHooksInstalled = (rc1 == 0 && rc2 == 0);
+    if (!g_resourceHooksInstalled) LOGE("Assembly resource hooks failed rc1=%d rc2=%d", rc1, rc2);
+    else LOGI("Assembly resource compat hooks installed.");
+    return g_resourceHooksInstalled ? 1 : 0;
 }
 
 }
