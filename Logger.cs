@@ -28,21 +28,20 @@ namespace Modding
         internal static void InitializeFileStream()
         {
             Debug.Log("Creating Mod Logger");
-
             _logLevel = LogLevel.Debug;
 
-            Directory.CreateDirectory(OldLogDir);
-
-            string current = Path.Combine(Application.persistentDataPath, "ModLog.txt");
-
-            BackupLog(current, OldLogDir);
-
-            var fs = new FileStream(current, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
-
             lock (Locker)
-                Writer = new StreamWriter(fs, Encoding.UTF8) { AutoFlush = true };
+            {
+                Writer?.Dispose();
 
-            File.SetCreationTimeUtc(current, DateTime.UtcNow);
+                Directory.CreateDirectory(OldLogDir);
+
+                string current = Path.Combine(Application.persistentDataPath, "ModLog.txt");
+
+                BackupLog(current, OldLogDir);
+
+                Writer = new StreamWriter(new FileStream(current, FileMode.Create, FileAccess.Write, FileShare.ReadWrite), Encoding.UTF8) { AutoFlush = true };
+            }
         }
 
         private static void BackupLog(string path, string dir)
@@ -50,36 +49,31 @@ namespace Modding
             if (!File.Exists(path))
                 return;
 
-            string time = File.GetCreationTimeUtc(path).ToString("MM dd yyyy (HH mm ss)", CultureInfo.InvariantCulture);
+            string time = File.GetLastWriteTimeUtc(path).ToString("MM dd yyyy (HH mm)", CultureInfo.InvariantCulture);
+            string dest = Path.Combine(dir, $"ModLog {time}.txt");
 
-            File.Move(path, Path.Combine(dir, $"ModLog {time}.txt"));
+            if (File.Exists(dest))
+            {
+                dest = Path.Combine(dir, $"ModLog {time}_{Guid.NewGuid().ToString("N").Substring(0, 4)}.txt");
+            }
+
+            File.Copy(path, dest, true);
         }
 
         internal static void ClearOldModlogs()
         {
-            if (ModHooks.GlobalSettings == null)
-            {
+            if (ModHooks.GlobalSettings == null || !Directory.Exists(OldLogDir))
                 return;
-            }
 
-            string oldLogDir = Path.Combine(Application.persistentDataPath, "Old ModLogs");
+            APILogger.Log($"Deleting modlogs older than {ModHooks.GlobalSettings.ModlogMaxAge} days ago");
 
-            if (Directory.Exists(oldLogDir))
+            DateTime limit = DateTime.UtcNow.AddDays(-ModHooks.GlobalSettings.ModlogMaxAge);
+
+            foreach (string file in Directory.GetFiles(OldLogDir))
             {
-                APILogger.Log($"Deleting modlogs older than {ModHooks.GlobalSettings.ModlogMaxAge} days ago");
-
-                DateTime limit = DateTime.UtcNow.AddDays(-ModHooks.GlobalSettings.ModlogMaxAge);
-
-                foreach (string file in Directory.GetFiles(oldLogDir).Where(f => File.GetCreationTimeUtc(f) < limit))
+                if (File.GetLastWriteTimeUtc(file) < limit)
                 {
-                    try
-                    {
-                        File.Delete(file);
-                    }
-                    catch (Exception ex)
-                    {
-                        APILogger.LogWarn("Failed to delete old modlog " + file + ": " + ex.Message);
-                    }
+                    File.Delete(file);
                 }
             }
         }
@@ -240,6 +234,7 @@ namespace Modding
                 ModHooks.LogConsole(text, level);
 
                 Writer?.Write(text);
+                Writer?.Flush();
             }
         }
     }
