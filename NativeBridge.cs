@@ -1,6 +1,5 @@
 using System;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using UnityEngine;
 
@@ -51,12 +50,16 @@ namespace Modding
         [DllImport("modding_native", EntryPoint = "mod2_install_gameobject_ctor_hook")]
         private static extern int InstallGameObjectCtorHookNative(IntPtr ctorTargetAddr);
 
+        [DllImport("modding_native", EntryPoint = "mod2_install_takemp_hook")]
+        private static extern int InstallTakeMPHookNative(IntPtr takeMPTargetAddr);
+
         private static bool _initTried;
         private static bool _ready;
         private static bool _locationHookInstalled;
         private static bool _addComponentHookInstalled;
         private static bool _resourceHooksInstalled;
         private static bool _gameObjectCtorInstalled;
+        private static bool _takeMPHookInstalled;
 
         internal static bool Ready => _ready;
 
@@ -102,6 +105,7 @@ namespace Modding
                             if (rlInfo != IntPtr.Zero) SetLocationResolverNative(rlInfo);
                         }
                         MethodInfo rlo = typeof(NativeCompat).GetMethod(nameof(NativeCompat.ResolveLocationFallbackObject),
+
                             BindingFlags.NonPublic | BindingFlags.Static);
                         if (rlo != null)
                         {
@@ -114,7 +118,6 @@ namespace Modding
             }
             catch (Exception ex) { Logger.APILogger.LogWarn("Native Location hook install failed: " + ex.Message); }
         }
-
         internal static void EnsureAddComponentHook()
         {
             if (_addComponentHookInstalled || !_ready) return;
@@ -140,13 +143,45 @@ namespace Modding
             catch (Exception ex) { Logger.APILogger.LogWarn("Native AddComponent hook install failed: " + ex.Message); }
         }
 
+        internal static void EnsureResourceHooks()
+        {
+            if (_resourceHooksInstalled || !_ready) return;
+            try
+            {
+                MethodInfo streamM = typeof(Assembly).GetMethod("GetManifestResourceStream",
+                    BindingFlags.Public | BindingFlags.Instance, null, new Type[] { typeof(string) }, null);
+                MethodInfo namesM = typeof(Assembly).GetMethod("GetManifestResourceNames",
+                    BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+                if (streamM == null || namesM == null) return;
+                IntPtr streamPtr = Il2CppResolver.TryGetMethodPointer(streamM, 1, "System.String");
+                IntPtr namesPtr = Il2CppResolver.TryGetMethodPointer(namesM, 0, (string)null);
+                if (streamPtr == IntPtr.Zero || namesPtr == IntPtr.Zero) return;
+                MethodInfo hStream = typeof(EmbeddedResourceExtractor).GetMethod(
+                    nameof(EmbeddedResourceExtractor.GetManifestResourceStream),
+                    BindingFlags.NonPublic | BindingFlags.Static);
+                MethodInfo hNames = typeof(EmbeddedResourceExtractor).GetMethod(
+                    nameof(EmbeddedResourceExtractor.GetManifestResourceNames),
+                    BindingFlags.NonPublic | BindingFlags.Static);
+                if (hStream == null || hNames == null) return;
+                IntPtr hStreamInfo = Il2CppResolver.TryGetMethodInfoPointer(hStream, 2, "System.Reflection.Assembly");
+                IntPtr hNamesInfo = Il2CppResolver.TryGetMethodInfoPointer(hNames, 1, "System.Reflection.Assembly");
+                if (hStreamInfo == IntPtr.Zero || hNamesInfo == IntPtr.Zero) return;
+                _resourceHooksInstalled = InstallResourceHooksNative(streamPtr, namesPtr, hStreamInfo, hNamesInfo) != 0;
+                Logger.APILogger.Log(_resourceHooksInstalled
+                    ? "Assembly resource compat hooks installed."
+                    : "Assembly resource compat hooks failed to install.");
+            }
+            catch (Exception ex) { Logger.APILogger.LogWarn("Native resource hooks install failed: " + ex.Message); }
+
+        }
+
         internal static void EnsureGameObjectCtorHook()
         {
             if (_gameObjectCtorInstalled || !_ready) return;
             try
             {
-                System.Reflection.ConstructorInfo ctor = typeof(GameObject).GetConstructor(
-                    new System.Type[] { typeof(string), typeof(System.Type[]) });
+                ConstructorInfo ctor = typeof(GameObject).GetConstructor(
+                    new Type[] { typeof(string), typeof(Type[]) });
                 if (ctor == null) return;
 
                 IntPtr ctorPtr = Il2CppResolver.TryGetConstructorPointer(ctor, 2, null);
@@ -164,39 +199,27 @@ namespace Modding
             catch (Exception ex) { Logger.APILogger.LogWarn("GameObject ctor hook install failed: " + ex.Message); }
         }
 
-        internal static void EnsureResourceHooks()
+        internal static void EnsureTakeMPHook()
         {
-            if (_resourceHooksInstalled || !_ready) return;
+            if (_takeMPHookInstalled || !_ready) return;
             try
             {
-                MethodInfo streamM = typeof(Assembly).GetMethod("GetManifestResourceStream",
-                    BindingFlags.Public | BindingFlags.Instance, null, new Type[] { typeof(string) }, null);
-                MethodInfo namesM = typeof(Assembly).GetMethod("GetManifestResourceNames",
-                    BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
-                if (streamM == null || namesM == null) return;
+                MethodInfo takeMP = typeof(PlayerData).GetMethod("TakeMP", BindingFlags.Public | BindingFlags.Instance);
+                if (takeMP == null) return;
 
-                IntPtr streamPtr = Il2CppResolver.TryGetMethodPointer(streamM, 1, "System.String");
-                IntPtr namesPtr = Il2CppResolver.TryGetMethodPointer(namesM, 0, (string)null);
-                if (streamPtr == IntPtr.Zero || namesPtr == IntPtr.Zero) return;
+                IntPtr takeMPPtr = Il2CppResolver.TryGetMethodPointer(takeMP, 1, "System.Int32");
+                if (takeMPPtr == IntPtr.Zero)
+                {
+                    Logger.APILogger.LogWarn("PlayerData.TakeMP method address not found.");
+                    return;
+                }
 
-                MethodInfo hStream = typeof(EmbeddedResourceExtractor).GetMethod(
-                    nameof(EmbeddedResourceExtractor.GetManifestResourceStream),
-                    BindingFlags.NonPublic | BindingFlags.Static);
-                MethodInfo hNames = typeof(EmbeddedResourceExtractor).GetMethod(
-                    nameof(EmbeddedResourceExtractor.GetManifestResourceNames),
-                    BindingFlags.NonPublic | BindingFlags.Static);
-                if (hStream == null || hNames == null) return;
-
-                IntPtr hStreamInfo = Il2CppResolver.TryGetMethodInfoPointer(hStream, 2, "System.Reflection.Assembly");
-                IntPtr hNamesInfo = Il2CppResolver.TryGetMethodInfoPointer(hNames, 1, "System.Reflection.Assembly");
-                if (hStreamInfo == IntPtr.Zero || hNamesInfo == IntPtr.Zero) return;
-
-                _resourceHooksInstalled = InstallResourceHooksNative(streamPtr, namesPtr, hStreamInfo, hNamesInfo) != 0;
-                Logger.APILogger.Log(_resourceHooksInstalled
-                    ? "Assembly resource compat hooks installed."
-                    : "Assembly resource compat hooks failed to install.");
+                _takeMPHookInstalled = InstallTakeMPHookNative(takeMPPtr) != 0;
+                Logger.APILogger.Log(_takeMPHookInstalled
+                    ? "PlayerData.TakeMP native hook installed."
+                    : "PlayerData.TakeMP native hook failed to install.");
             }
-            catch (Exception ex) { Logger.APILogger.LogWarn("Native resource hooks install failed: " + ex.Message); }
+            catch (Exception ex) { Logger.APILogger.LogWarn("PlayerData.TakeMP hook install failed: " + ex.Message); }
         }
 
         internal static void Register(Assembly asm, string path)
@@ -222,16 +245,20 @@ namespace Modding
 
         internal static IntPtr ObjectToPtr(object o) => ToObjectPtr(o);
 
-        private static IntPtr ToObjectPtr(object o)
+        private static unsafe IntPtr ToObjectPtr(object o)
         {
             if (o == null) return IntPtr.Zero;
-            return Unsafe.As<object, IntPtr>(ref o);
+            TypedReference tr = __makeref(o);
+            return *(IntPtr*)&tr;
         }
 
-        internal static object FromObjectPtr(IntPtr p)
+        internal static unsafe object FromObjectPtr(IntPtr p)
         {
             if (p == IntPtr.Zero) return null;
-            return Unsafe.As<IntPtr, object>(ref p);
+            object o = null;
+            TypedReference tr = __makeref(o);
+            *(IntPtr*)&tr = p;
+            return o;
         }
 
         internal static object InvokeOrig(MethodInfo target, IntPtr nativeMethod, IntPtr trampoline,
