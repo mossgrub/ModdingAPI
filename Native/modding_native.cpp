@@ -12,13 +12,17 @@
 #define LOG_TAG "ModdingNative"
 
 static char g_logPath[1024] = {0};
+static pthread_mutex_t g_logLock = PTHREAD_MUTEX_INITIALIZER;
 
 static void FileAppend(const char *line) {
     if (!g_logPath[0]) return;
+    pthread_mutex_lock(&g_logLock);
     FILE *f = fopen(g_logPath, "a");
-    if (!f) return;
-    fprintf(f, "%s\n", line);
-    fclose(f);
+    if (f) {
+        fprintf(f, "%s\n", line);
+        fclose(f);
+    }
+    pthread_mutex_unlock(&g_logLock);
 }
 
 static void LogPrint(int level, const char *fmt, ...) {
@@ -35,9 +39,14 @@ static void LogPrint(int level, const char *fmt, ...) {
 #define LOGE(...) LogPrint(ANDROID_LOG_ERROR, __VA_ARGS__)
 
 extern "C" void mod2_set_log_file(const char *path) {
-    if (!path || !*path) { g_logPath[0] = 0; return; }
-    strncpy(g_logPath, path, sizeof(g_logPath) - 1);
-    g_logPath[sizeof(g_logPath) - 1] = 0;
+    pthread_mutex_lock(&g_logLock);
+    if (!path || !*path) { 
+        g_logPath[0] = 0; 
+    } else {
+        strncpy(g_logPath, path, sizeof(g_logPath) - 1);
+        g_logPath[sizeof(g_logPath) - 1] = 0;
+    }
+    pthread_mutex_unlock(&g_logLock);
 }
 
 namespace {
@@ -246,8 +255,6 @@ static bool ResolveAssemblyName(const void *self, char *outBuf, size_t outLen) {
     return false;
 }
 
-static void *LocationResolverCall(const char *name);
-
 static const char *ResolvePathFromAssemblyObject(void *self) {
     if (!self) return nullptr;
 
@@ -362,7 +369,7 @@ static void *ResolveManagedLocationFallback(void *self) {
     return nullptr;
 }
 
-static void *LocationHookImpl(void *self) {
+static void *LocationHookImpl(void *self, void *methodInfo) {
     if (g_strNew && self) {
         const char *p = ResolvePathFromAssemblyObject(self);
         if (p && *p) {
@@ -380,7 +387,7 @@ static void *LocationHookImpl(void *self) {
         if (failLogs < 20) { ++failLogs; LOGI("mod2 locfail#%d: resolve failed for self=%p", failLogs, self); }
     }
 
-    void *origRes = g_origGetLocation ? ((void *(*)(void *))g_origGetLocation)(self) : nullptr;
+    void *origRes = g_origGetLocation ? ((void *(*)(void *, void *))g_origGetLocation)(self, methodInfo) : nullptr;
     return origRes;
 }
 
@@ -620,10 +627,8 @@ int mod2_install_addcomponent_hook(void *addComponentMethodPtr, void *getCompone
     return g_addComponentInstalled ? 1 : 0;
 }
 
-// GameObject(string, params Type[])
 typedef struct { void *klass; void *monitor; } Il2CppObjectHeaderCompat;
-typedef struct { Il2CppObjectHeaderCompat obj; void *bounds; uintptr_t max_length; void *vector[8]; } Il2CppArrayHeaderCompat;
-static Il2CppArrayHeaderCompat g_emptyComponentsArray;
+typedef struct { Il2CppObjectHeaderCompat obj; void *bounds; uintptr_t max_length; void *vector[1]; } Il2CppArrayHeaderCompat;
 
 static void *g_gameObjectCtorTarget     = nullptr;
 static void *g_gameObjectCtorOrig       = nullptr;
@@ -633,12 +638,12 @@ static void GameObjectCtorHook(void *self, void *name, void *componentsArray, vo
     if (!self) return;
     if (g_gameObjectCtorOrig) {
         typedef void (*GameObjectCtorFn)(void*, void*, void*, void*);
-        ((GameObjectCtorFn)g_gameObjectCtorOrig)(self, name, &g_emptyComponentsArray, methodInfo);
+        ((GameObjectCtorFn)g_gameObjectCtorOrig)(self, name, nullptr, methodInfo);
     }
     if (!componentsArray) return;
     Il2CppArrayHeaderCompat *arr = (Il2CppArrayHeaderCompat*)componentsArray;
     uintptr_t length = arr->max_length;
-    for (uintptr_t i = 0; i < length && i < 8; ++i) {
+    for (uintptr_t i = 0; i < length; ++i) {
         void *typeObj = arr->vector[i];
         if (typeObj) {
             AddCompLog("ctor add component %s", TypeNameForLog(typeObj));
@@ -665,12 +670,12 @@ static void *g_origGetResourceStream = nullptr;
 static void *g_origGetResourceNames  = nullptr;
 static bool  g_resourceHooksInstalled = false;
 
-static void *ResourceStreamHook(void *self, void *nameStr) {
+static void *ResourceStreamHook(void *self, void *nameStr, void *methodInfo) {
     if (!nameStr) return nullptr;
     void *origResult = nullptr;
     if (g_origGetResourceStream) {
-        typedef void* (*Func)(void*, void*);
-        origResult = ((Func)g_origGetResourceStream)(self, nameStr);
+        typedef void* (*Func)(void*, void*, void*);
+        origResult = ((Func)g_origGetResourceStream)(self, nameStr, methodInfo);
     }
     if (origResult) return origResult;
     if (g_helperStreamMethod && g_invoke && self) {
@@ -682,11 +687,11 @@ static void *ResourceStreamHook(void *self, void *nameStr) {
     return nullptr;
 }
 
-static void *ResourceNamesHook(void *self) {
+static void *ResourceNamesHook(void *self, void *methodInfo) {
     void *origResult = nullptr;
     if (g_origGetResourceNames) {
-        typedef void* (*Func)(void*);
-        origResult = ((Func)g_origGetResourceNames)(self);
+        typedef void* (*Func)(void*, void*);
+        origResult = ((Func)g_origGetResourceNames)(self, methodInfo);
     }
     bool isEmpty = true;
     if (origResult && g_arrayLength) {
@@ -716,6 +721,41 @@ int mod2_install_resource_hooks(void *targetStreamPtr, void *targetNamesPtr,
     if (!g_resourceHooksInstalled) LOGE("Assembly resource hooks failed rc1=%d rc2=%d", rc1, rc2);
     else LOGI("Assembly resource compat hooks installed.");
     return g_resourceHooksInstalled ? 1 : 0;
+}
+
+// HeroController.TakeMP
+
+static void *g_takeMPTarget    = nullptr;
+static void *g_takeMPOrig      = nullptr;
+static bool  g_takeMPInstalled = false;
+
+static void TakeMP_Hook(void *self, int amount, void *methodInfo) {
+    if (amount == 1) {
+        LOGI("mod2: TakeMP(1) intercepted and ignored");
+        return;
+    }
+
+    if (g_takeMPOrig) {
+        typedef void (*TakeMPFn)(void *, int, void *);
+        ((TakeMPFn)g_takeMPOrig)(self, amount, methodInfo);
+    }
+}
+
+int mod2_install_takemp_hook(void *takeMPMethodPtr) {
+    if (g_takeMPInstalled) return 1;
+    if (!takeMPMethodPtr || !g_ready || !g_dobbyHook) return 0;
+
+    g_takeMPTarget = takeMPMethodPtr;
+    int rc = g_dobbyHook(g_takeMPTarget, (void *)TakeMP_Hook, (void **)&g_takeMPOrig);
+    g_takeMPInstalled = (rc == 0);
+
+    if (!g_takeMPInstalled) {
+        LOGE("HeroController.TakeMP DobbyHook failed rc=%d", rc);
+    } else {
+        LOGI("HeroController.TakeMP native hook installed");
+    }
+
+    return g_takeMPInstalled ? 1 : 0;
 }
 
 }
