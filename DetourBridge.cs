@@ -607,9 +607,20 @@ namespace Modding
                 {
                     int ri = st.RefIndexes[i];
                     if (ri >= 0 && ri < argLen && args[ri] is IntPtr p)
-                        args[ri] = p == IntPtr.Zero ? null : NativeBridge.FromObjectPtr(p);
+                    {
+                        try
+                        {
+                            args[ri] = p == IntPtr.Zero ? null : NativeBridge.FromObjectPtr(p);
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.APILogger.LogError($"Failed to convert pointer in argument {ri}: {ex.Message}");
+                            args[ri] = null;
+                        }
+                    }
                 }
             }
+
             object[] full = new object[argLen + 1];
             full[0] = st.Orig;
             if (argLen > 0)

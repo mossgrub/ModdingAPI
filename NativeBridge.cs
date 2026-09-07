@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using UnityEngine;
 
@@ -22,10 +23,10 @@ namespace Modding
 
         [DllImport("modding_native", EntryPoint = "mod2_register_assembly_path")]
         private static extern void RegisterAssemblyPath(
-    [MarshalAs(UnmanagedType.IUnknown)] object assemblyObject,
-    [MarshalAs(UnmanagedType.LPStr)] string name,
-    [MarshalAs(UnmanagedType.LPStr)] string path,
-    IntPtr assemblyNative);
+            [MarshalAs(UnmanagedType.IUnknown)] object assemblyObject,
+            [MarshalAs(UnmanagedType.LPStr)] string name,
+            [MarshalAs(UnmanagedType.LPStr)] string path,
+            IntPtr assemblyNative);
 
         [DllImport("modding_native", EntryPoint = "mod2_invoke_orig")]
         private static extern IntPtr InvokeOrigNative(IntPtr methodInfo, IntPtr trampoline, IntPtr obj,
@@ -39,6 +40,7 @@ namespace Modding
 
         [DllImport("modding_native", EntryPoint = "mod2_set_location_resolver")]
         private static extern void SetLocationResolverNative(IntPtr resolverMethodInfo);
+
         [DllImport("modding_native", EntryPoint = "mod2_set_location_resolver_object")]
         private static extern void SetLocationResolverObjectNative(IntPtr resolverMethodInfo);
 
@@ -54,6 +56,7 @@ namespace Modding
         private static bool _locationHookInstalled;
         private static bool _addComponentHookInstalled;
         private static bool _resourceHooksInstalled;
+        private static bool _gameObjectCtorInstalled;
 
         internal static bool Ready => _ready;
 
@@ -137,14 +140,11 @@ namespace Modding
             catch (Exception ex) { Logger.APILogger.LogWarn("Native AddComponent hook install failed: " + ex.Message); }
         }
 
-        private static bool _gameObjectCtorInstalled;
-
         internal static void EnsureGameObjectCtorHook()
         {
             if (_gameObjectCtorInstalled || !_ready) return;
             try
             {
-                // GameObject(string name, params Type[] components)
                 System.Reflection.ConstructorInfo ctor = typeof(GameObject).GetConstructor(
                     new System.Type[] { typeof(string), typeof(System.Type[]) });
                 if (ctor == null) return;
@@ -225,24 +225,13 @@ namespace Modding
         private static IntPtr ToObjectPtr(object o)
         {
             if (o == null) return IntPtr.Zero;
-            GCHandle h = GCHandle.Alloc(o, GCHandleType.Normal);
-            try { return GCHandle.ToIntPtr(h); }
-            finally { if (h.IsAllocated) h.Free(); }
+            return Unsafe.As<object, IntPtr>(ref o);
         }
 
         internal static object FromObjectPtr(IntPtr p)
         {
             if (p == IntPtr.Zero) return null;
-            var box = new object[1];
-            GCHandle h = GCHandle.Alloc(box, GCHandleType.Pinned);
-            try
-            {
-                IntPtr slot = h.AddrOfPinnedObject();
-                if (IntPtr.Size == 8) Marshal.WriteInt64(slot, 0, p.ToInt64());
-                else Marshal.WriteInt32(slot, 0, p.ToInt32());
-                return box[0];
-            }
-            finally { h.Free(); }
+            return Unsafe.As<IntPtr, object>(ref p);
         }
 
         internal static object InvokeOrig(MethodInfo target, IntPtr nativeMethod, IntPtr trampoline,
@@ -270,36 +259,31 @@ namespace Modding
                         for (int i = 0; i < argCount; i++)
                         {
                             Type pt = ps[i].ParameterType;
+                            object val = args[a + i];
 
                             if (Nullable.GetUnderlyingType(pt) == typeof(float))
                             {
-                                object val = args[a + i];
                                 IntPtr buf = Marshal.AllocHGlobal(8);
-                                try
+                                Marshal.WriteByte(buf, 0, (byte)(val != null ? 1 : 0));
+                                if (val != null)
                                 {
-                                    Marshal.WriteByte(buf, 0, (byte)(val != null ? 1 : 0));
-                                    if (val != null)
-                                    {
-                                        byte[] f = BitConverter.GetBytes((float)val);
-                                        Marshal.Copy(f, 0, new IntPtr(buf.ToInt64() + 4), f.Length);
-                                    }
-                                }
-                                catch
-                                {
-                                    Marshal.FreeHGlobal(buf);
-                                    throw;
+                                    byte[] f = BitConverter.GetBytes((float)val);
+                                    Marshal.Copy(f, 0, new IntPtr(buf.ToInt64() + 4), f.Length);
                                 }
                                 slots[i] = buf;
                                 owned[ownedN++] = buf;
                             }
-                            else if (pt.IsValueType)
+                            else if (pt.IsValueType && val != null)
                             {
                                 IntPtr buf = Marshal.AllocHGlobal(Marshal.SizeOf(pt));
-                                Marshal.StructureToPtr(args[a + i], buf, false);
+                                Marshal.StructureToPtr(val, buf, false);
                                 slots[i] = buf;
                                 owned[ownedN++] = buf;
                             }
-                            else slots[i] = ToObjectPtr(args[a + i]);
+                            else
+                            {
+                                slots[i] = ToObjectPtr(val);
+                            }
                         }
                     }
 
