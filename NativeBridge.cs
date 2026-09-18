@@ -204,22 +204,36 @@ namespace Modding
             if (_takeMPHookInstalled || !_ready) return;
             try
             {
-                MethodInfo takeMP = typeof(PlayerData).GetMethod("TakeMP", BindingFlags.Public | BindingFlags.Instance);
-                if (takeMP == null) return;
-
-                IntPtr takeMPPtr = Il2CppResolver.TryGetMethodPointer(takeMP, 1, "System.Int32");
-                if (takeMPPtr == IntPtr.Zero)
+                // The ILHook being replaced targets HeroController.TakeMP; older mods
+                // patched PlayerData.TakeMP. Try both so the native hook matches
+                // whichever one the game actually calls.
+                Type[] candidates = new Type[] { typeof(HeroController), typeof(PlayerData) };
+                for (int c = 0; c < candidates.Length && !_takeMPHookInstalled; c++)
                 {
-                    Logger.APILogger.LogWarn("PlayerData.TakeMP method address not found.");
-                    return;
-                }
+                    Type t = candidates[c];
+                    MethodInfo takeMP = t.GetMethod("TakeMP",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                        null, new Type[] { typeof(int) }, null);
+                    if (takeMP == null)
+                    {
+                        Logger.APILogger.LogDebug(t.Name + ".TakeMP(int) not found.");
+                        continue;
+                    }
 
-                _takeMPHookInstalled = InstallTakeMPHookNative(takeMPPtr) != 0;
-                Logger.APILogger.Log(_takeMPHookInstalled
-                    ? "PlayerData.TakeMP native hook installed."
-                    : "PlayerData.TakeMP native hook failed to install.");
+                    IntPtr takeMPPtr = Il2CppResolver.TryGetMethodPointer(takeMP, 1, "System.Int32");
+                    if (takeMPPtr == IntPtr.Zero)
+                    {
+                        Logger.APILogger.LogWarn(t.Name + ".TakeMP method address not found.");
+                        continue;
+                    }
+
+                    _takeMPHookInstalled = InstallTakeMPHookNative(takeMPPtr) != 0;
+                    Logger.APILogger.Log(_takeMPHookInstalled
+                        ? t.Name + ".TakeMP native hook installed."
+                        : t.Name + ".TakeMP native hook failed to install.");
+                }
             }
-            catch (Exception ex) { Logger.APILogger.LogWarn("PlayerData.TakeMP hook install failed: " + ex.Message); }
+            catch (Exception ex) { Logger.APILogger.LogWarn("TakeMP hook install failed: " + ex.Message); }
         }
 
         internal static void Register(Assembly asm, string path)
