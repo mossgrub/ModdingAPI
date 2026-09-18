@@ -8,6 +8,9 @@
 #include <string.h>
 #include <strings.h>
 #include <stdint.h>
+#include <errno.h>
+#include <unistd.h>
+#include <sys/mman.h>
 
 #define LOG_TAG "ModdingNative"
 
@@ -87,6 +90,57 @@ Il2CppTypeFromReflectionFn g_typeFromReflection = nullptr;
 Il2CppClassFromTypeFn       g_classFromType       = nullptr;
 Il2CppClassGetNameFn        g_classGetName        = nullptr;
 Il2CppArrayLengthFn         g_arrayLength         = nullptr;
+
+// marshalling symbols (needed to rebuild the real native calling convention)
+typedef uint32_t (*Il2CppMethodGetParamCountFn)(void *method);
+typedef const void *(*Il2CppMethodGetParamFn)(void *method, uint32_t index);
+typedef int (*Il2CppTypeGetTypeFn)(const void *type);
+typedef int32_t (*Il2CppClassValueSizeFn)(void *klass, uint32_t *align);
+typedef const void *(*Il2CppFieldGetTypeFn)(void *field);
+typedef const char *(*Il2CppMethodGetNameFn)(void *method);
+typedef void *(*Il2CppMethodGetClassFn)(void *method);
+typedef uint32_t (*Il2CppMethodGetFlagsFn)(void *method, uint32_t *iflags);
+typedef const void *(*Il2CppMethodGetReturnTypeFn)(void *method);
+
+Il2CppMethodGetParamCountFn g_methodParamCount = nullptr;
+Il2CppMethodGetParamFn      g_methodParam      = nullptr;
+Il2CppTypeGetTypeFn         g_typeGetType      = nullptr;
+Il2CppClassValueSizeFn      g_classValueSize   = nullptr;
+Il2CppFieldGetTypeFn        g_fieldGetType     = nullptr;
+Il2CppMethodGetNameFn       g_methodGetName    = nullptr;
+Il2CppMethodGetClassFn      g_methodGetClass   = nullptr;
+Il2CppMethodGetFlagsFn      g_methodGetFlags   = nullptr;
+Il2CppMethodGetReturnTypeFn g_methodGetReturnType = nullptr;
+
+// il2cpp type tags (Il2CppTypeEnum), used to decide how each argument travels.
+static const int kTypeEnd        = 0x00;
+static const int kTypeVoid       = 0x01;
+static const int kTypeBoolean    = 0x02;
+static const int kTypeChar       = 0x03;
+static const int kTypeI1         = 0x04;
+static const int kTypeU1         = 0x05;
+static const int kTypeI2         = 0x06;
+static const int kTypeU2         = 0x07;
+static const int kTypeI4         = 0x08;
+static const int kTypeU4         = 0x09;
+static const int kTypeI8         = 0x0a;
+static const int kTypeU8         = 0x0b;
+static const int kTypeR4         = 0x0c;
+static const int kTypeR8         = 0x0d;
+static const int kTypeString     = 0x0e;
+static const int kTypePtr        = 0x0f;
+static const int kTypeByRef      = 0x10;
+static const int kTypeValueType  = 0x11;
+static const int kTypeClass      = 0x12;
+static const int kTypeVar        = 0x13;
+static const int kTypeArray      = 0x14;
+static const int kTypeGenericInst= 0x15;
+static const int kTypeTypedByRef = 0x16;
+static const int kTypeI          = 0x18;
+static const int kTypeU          = 0x19;
+static const int kTypeFnPtr      = 0x1b;
+static const int kTypeObject     = 0x1c;
+static const int kTypeSzArray    = 0x1d;
 
 typedef int (*DobbyHookFn)(void *target, void *replacement, void **outTrampoline);
 typedef int (*DobbyDestroyFn)(void *target);
@@ -436,8 +490,565 @@ int mod2_init(void) {
     g_arrayLength         = (Il2CppArrayLengthFn)dlsym(h, "il2cpp_array_length");
     LOGI("mod2_init: type_from_reflection=%p class_from_type=%p class_get_name=%p", (void*)g_typeFromReflection, (void*)g_classFromType, (void*)g_classGetName);
 
+    g_methodParamCount = (Il2CppMethodGetParamCountFn)dlsym(h, "il2cpp_method_get_param_count");
+    g_methodParam      = (Il2CppMethodGetParamFn)dlsym(h, "il2cpp_method_get_param");
+    g_typeGetType      = (Il2CppTypeGetTypeFn)dlsym(h, "il2cpp_type_get_type");
+    g_classValueSize   = (Il2CppClassValueSizeFn)dlsym(h, "il2cpp_class_value_size");
+    g_fieldGetType     = (Il2CppFieldGetTypeFn)dlsym(h, "il2cpp_field_get_type");
+    g_methodGetName    = (Il2CppMethodGetNameFn)dlsym(h, "il2cpp_method_get_name");
+    g_methodGetClass   = (Il2CppMethodGetClassFn)dlsym(h, "il2cpp_method_get_class");
+    g_methodGetFlags   = (Il2CppMethodGetFlagsFn)dlsym(h, "il2cpp_method_get_flags");
+    g_methodGetReturnType = (Il2CppMethodGetReturnTypeFn)dlsym(h, "il2cpp_method_get_return_type");
+    LOGI("mod2_init: marshal syms paramCount=%p param=%p typeType=%p valueSize=%p fieldType=%p flags=%p",
+         (void*)g_methodParamCount, (void*)g_methodParam, (void*)g_typeGetType,
+         (void*)g_classValueSize, (void*)g_fieldGetType, (void*)g_methodGetFlags);
+
     g_ready = true;
     return 1;
+}
+
+// HybridCLR stub shadowing
+
+#if defined(__aarch64__)
+
+typedef struct {
+    void *target;
+    void *trampoline;
+    uint64_t rawX0;
+    int active;
+} ShadowSlot;
+
+static ShadowSlot g_shadows[64];
+static int g_shadowCount = 0;
+static int g_shadowLogs = 0;
+
+static void ShadowHelper(uint64_t idx, uint64_t raw) {
+    if (idx < (uint64_t)g_shadowCount) g_shadows[idx].rawX0 = raw;
+}
+
+static uint32_t ShadowLdrLit(int rt, int imm19) {
+    return 0x58000000u | ((uint32_t)imm19 << 5) | (uint32_t)(rt & 31);
+}
+static uint32_t ShadowStpX(int rt, int rt2, int rn, int off) {
+    uint32_t imm7 = (uint32_t)(off / 8) & 0x7Fu;
+    return 0xA9000000u | (imm7 << 15) | ((uint32_t)(rt2 & 31) << 10) |
+           ((uint32_t)(rn & 31) << 5) | (uint32_t)(rt & 31);
+}
+static uint32_t ShadowLdpX(int rt, int rt2, int rn, int off) {
+    uint32_t imm7 = (uint32_t)(off / 8) & 0x7Fu;
+    return 0xA9400000u | (imm7 << 15) | ((uint32_t)(rt2 & 31) << 10) |
+           ((uint32_t)(rn & 31) << 5) | (uint32_t)(rt & 31);
+}
+static uint32_t ShadowStpQ(int rt, int rt2, int rn, int off) {
+    uint32_t imm7 = (uint32_t)(off / 16) & 0x7Fu;
+    return 0xAD000000u | (imm7 << 15) | ((uint32_t)(rt2 & 31) << 10) |
+           ((uint32_t)(rn & 31) << 5) | (uint32_t)(rt & 31);
+}
+static uint32_t ShadowLdpQ(int rt, int rt2, int rn, int off) {
+    uint32_t imm7 = (uint32_t)(off / 16) & 0x7Fu;
+    return 0xAD400000u | (imm7 << 15) | ((uint32_t)(rt2 & 31) << 10) |
+           ((uint32_t)(rn & 31) << 5) | (uint32_t)(rt & 31);
+}
+
+// 35 instructions (140 bytes) + two literals at +144/+152.
+// The whole frame lives on the stack, so the stub stays re-entrant and keeps
+// every argument register (x0..x15, q0..q7, x30) intact for the tail call.
+static void ShadowEmitStub(uint8_t *code, uint32_t idx, void *helper, void *bridge) {
+    uint32_t ins[35];
+    int i = 0;
+    ins[i++] = 0xD10443FFu;                       // sub  sp, sp, #272
+    ins[i++] = 0xF90083FEu;                       // str  x30, [sp, #256]
+    ins[i++] = ShadowStpX(0, 1, 31, 0);           // stp  x0, x1, [sp]
+    ins[i++] = ShadowStpX(2, 3, 31, 16);
+    ins[i++] = ShadowStpX(4, 5, 31, 32);
+    ins[i++] = ShadowStpX(6, 7, 31, 48);
+    ins[i++] = ShadowStpX(8, 9, 31, 64);          // stp  x8, x9, [sp, #64]
+    ins[i++] = ShadowStpX(10, 11, 31, 80);
+    ins[i++] = ShadowStpX(12, 13, 31, 96);
+    ins[i++] = ShadowStpX(14, 15, 31, 112);
+    ins[i++] = ShadowStpQ(0, 1, 31, 128);         // stp  q0, q1, [sp, #128]
+    ins[i++] = ShadowStpQ(2, 3, 31, 160);
+    ins[i++] = ShadowStpQ(4, 5, 31, 192);
+    ins[i++] = ShadowStpQ(6, 7, 31, 224);
+    ins[i++] = 0xD2800000u | ((uint32_t)(idx & 0xFFFFu) << 5) | 17u;  // movz x17, #idx
+    ins[i++] = 0xAA0003E1u;                       // mov  x1, x0   (raw self)
+    ins[i++] = 0xAA1103E0u;                       // mov  x0, x17  (slot)
+    ins[i++] = ShadowLdrLit(16, 19);              // ldr  x16, [pc, #76] (helper)
+    ins[i++] = 0xD63F0200u;                       // blr  x16
+    ins[i++] = ShadowLdpX(0, 1, 31, 0);           // ldp  x0, x1, [sp]
+    ins[i++] = ShadowLdpX(2, 3, 31, 16);
+    ins[i++] = ShadowLdpX(4, 5, 31, 32);
+    ins[i++] = ShadowLdpX(6, 7, 31, 48);
+    ins[i++] = ShadowLdpX(8, 9, 31, 64);
+    ins[i++] = ShadowLdpX(10, 11, 31, 80);
+    ins[i++] = ShadowLdpX(12, 13, 31, 96);
+    ins[i++] = ShadowLdpX(14, 15, 31, 112);
+    ins[i++] = ShadowLdpQ(0, 1, 31, 128);
+    ins[i++] = ShadowLdpQ(2, 3, 31, 160);
+    ins[i++] = ShadowLdpQ(4, 5, 31, 192);
+    ins[i++] = ShadowLdpQ(6, 7, 31, 224);
+    ins[i++] = 0xF94083FEu;                       // ldr  x30, [sp, #256]
+    ins[i++] = 0x910443FFu;                       // add  sp, sp, #272
+    ins[i++] = ShadowLdrLit(17, 5);               // ldr  x17, [pc, #20] (bridge)
+    ins[i++] = 0xD61F0220u;                       // br   x17
+    memcpy(code, ins, sizeof(ins));
+
+    uint64_t *lit = (uint64_t *)(code + 144);
+    lit[0] = (uint64_t)(uintptr_t)helper;
+    lit[1] = (uint64_t)(uintptr_t)bridge;
+}
+
+//   - patchSize 4  (b)     : +-128MB
+//   - patchSize 12 (adrp)  : +-4GB
+static void *ShadowAllocNear(uint64_t target, int patchSize) {
+    if (target < 0x10000ULL) return nullptr;
+    const size_t pageSz = 0x1000;
+    const uint64_t base = target & ~0xFFFULL;
+    const int64_t maxRange = (patchSize == 4) ? (int64_t)0x07F00000 : (int64_t)0xF0000000;
+
+    const int64_t steps[2] = { 0x10000, 0x100000 };
+    for (int pass = 0; pass < 2; ++pass) {
+        const int64_t step = steps[pass];
+        const int64_t passLimit = (pass == 0) ? (int64_t)0x01000000 : maxRange;
+        for (int64_t off = 0; off <= passLimit; off += step) {
+            for (int dir = 0; dir < 2; ++dir) {
+                if (off == 0 && dir == 1) continue;
+                const int64_t sign = (dir == 0) ? 1 : -1;
+                const int64_t cand = (int64_t)base + sign * off;
+                if (cand < (int64_t)0x10000) continue;
+                void *p = mmap((void *)(uintptr_t)cand, pageSz,
+                               PROT_READ | PROT_WRITE | PROT_EXEC,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+                if (p == (void *)(uintptr_t)cand) return p;
+                if (p != MAP_FAILED) munmap(p, pageSz);
+            }
+        }
+    }
+    if (g_shadowLogs < 10) {
+        g_shadowLogs++;
+        LOGE("shadow: no free page near target=%p (patchSize=%d)", (void *)target, patchSize);
+    }
+    return nullptr;
+}
+
+static int ShadowCurrentProt(uintptr_t addr) {
+    FILE *f = fopen("/proc/self/maps", "r");
+    if (!f) return -1;
+    char line[512];
+    int result = -1;
+    while (fgets(line, sizeof(line), f)) {
+        unsigned long long start = 0, end = 0;
+        char perms[8] = {0};
+        if (sscanf(line, "%llx-%llx %7s", &start, &end, perms) != 3) continue;
+        if (addr < (uintptr_t)start || addr >= (uintptr_t)end) continue;
+        int prot = 0;
+        if (perms[0] == 'r') prot |= PROT_READ;
+        if (perms[1] == 'w') prot |= PROT_WRITE;
+        if (perms[2] == 'x') prot |= PROT_EXEC;
+        result = prot;
+        break;
+    }
+    fclose(f);
+    return result;
+}
+
+// Rewrites the stub at `target` so it branches to `stub`.
+
+static int ShadowPatchTarget(uint64_t target, void *stub, int patchSize) {
+    if (patchSize != 4 && patchSize != 12) return 0;
+
+    const uint64_t start = target;
+    const uint64_t end = target + (uint64_t)patchSize;
+    const uint64_t pageStart = start & ~0xFFFULL;
+    const uint64_t pageEnd = (end + 0xFFFULL) & ~0xFFFULL;
+    size_t len = (size_t)(pageEnd - pageStart);
+    if (len == 0) len = 0x1000;
+
+    const size_t second = (len > 0x1000) ? (len - 0x1000) : 0;
+    const int prevA = ShadowCurrentProt(pageStart);
+    const int prevB = second ? ShadowCurrentProt(pageStart + 0x1000) : prevA;
+
+    if (prevA < 0) {
+        if (g_shadowLogs < 10) {
+            g_shadowLogs++;
+            LOGE("shadow: %p is not inside any mapping; refusing to patch", (void *)pageStart);
+        }
+        return 0;
+    }
+
+    if (mprotect((void *)pageStart, 0x1000, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+        if (g_shadowLogs < 10) {
+            g_shadowLogs++;
+            LOGE("shadow: mprotect RWX failed at %p errno=%d", (void *)pageStart, errno);
+        }
+        return 0;
+    }
+    if (second) {
+        if (mprotect((void *)(pageStart + 0x1000), second,
+                     PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+            mprotect((void *)pageStart, 0x1000, prevA > 0 ? prevA : (PROT_READ | PROT_EXEC));
+            if (g_shadowLogs < 10) {
+                g_shadowLogs++;
+                LOGE("shadow: mprotect RWX failed on second page %p errno=%d",
+                     (void *)(pageStart + 0x1000), errno);
+            }
+            return 0;
+        }
+    }
+
+    int rc = 0;
+    if (patchSize == 4) {
+        const int64_t delta = (int64_t)((uintptr_t)stub - (uintptr_t)target);
+        if (delta >= -(int64_t)0x08000000 && delta <= (int64_t)0x07FFFFFC && ((delta & 3) == 0)) {
+            uint32_t b = 0x14000000u | (uint32_t)((delta >> 2) & 0x03FFFFFF);
+            memcpy((void *)target, &b, 4);
+            rc = 1;
+        }
+    } else {
+        const int64_t pageOff = (int64_t)((uintptr_t)stub & ~0xFFFULL) - (int64_t)(target & ~0xFFFULL);
+        const int64_t pg = pageOff >> 12;
+        if (pg >= -(int64_t)(1 << 20) && pg < (int64_t)(1 << 20)) {
+            uint32_t immLo = (uint32_t)(pg & 3);
+            uint32_t immHi = (uint32_t)((pg >> 2) & 0x7FFFF);
+            uint32_t w0 = 0x90000000u | 0x11u | (immLo << 29) | (immHi << 5);
+            uint32_t w1 = 0x91000231u | (((uint32_t)((uintptr_t)stub & 0xFFFu)) << 10);
+            uint32_t w2 = 0xD61F0220u;
+            memcpy((void *)target, &w0, 4);
+            memcpy((void *)(target + 4), &w1, 4);
+            memcpy((void *)(target + 8), &w2, 4);
+            rc = 1;
+        }
+    }
+
+    if (rc) __builtin___clear_cache((char *)start, (char *)end);
+
+    mprotect((void *)pageStart, 0x1000, prevA > 0 ? prevA : (PROT_READ | PROT_EXEC));
+    if (second) mprotect((void *)(pageStart + 0x1000), second,
+                         prevB > 0 ? prevB : (PROT_READ | PROT_EXEC));
+    return rc;
+}
+
+//   4 bytes  : b <off>
+//   12 bytes : adrp xN, page ; add xN, xN, #off ; br xN
+//   16 bytes : ldr xN, [pc, #off] ; br xN ; <literal>
+static int ShadowDecodeAt(uintptr_t target, void **bridgeOut, int *patchSizeOut) {
+    *bridgeOut = nullptr;
+    *patchSizeOut = 0;
+    if (!target) return 0;
+
+    uint32_t w0 = 0, w1 = 0, w2 = 0;
+    memcpy(&w0, (const void *)target, 4);
+    memcpy(&w1, (const void *)(target + 4), 4);
+    memcpy(&w2, (const void *)(target + 8), 4);
+
+    // b <offset>
+    if ((w0 & 0xFC000000u) == 0x14000000u) {
+        int64_t simm = (int64_t)(w0 & 0x03FFFFFFu);
+        if (simm & 0x02000000) simm -= 0x04000000;
+        *bridgeOut = (void *)(uintptr_t)((int64_t)target + (simm << 2));
+        *patchSizeOut = 4;
+        return 1;
+    }
+
+    // bits 30:29 belong to immlo, so the mask must not constrain them.
+    if ((w0 & 0x9F000000u) == 0x90000000u &&
+        (w1 & 0xFF000000u) == 0x91000000u &&
+        ((w1 >> 5) & 31u) == (w0 & 31u) && (w1 & 31u) == (w0 & 31u) &&
+        (w2 & 0xFFFFFC1Fu) == 0xD61F0000u && (((w2 >> 5) & 31u) == (w0 & 31u))) {
+        int64_t immHi = (int64_t)((w0 >> 5) & 0x7FFFFu);
+        if (immHi & 0x40000) immHi -= 0x80000;
+        int64_t immLo = (int64_t)((w0 >> 29) & 3u);
+        int64_t pageOff = ((immHi << 2) | immLo) << 12;
+        uintptr_t base = (target & ~0xFFFULL) + (uintptr_t)pageOff;
+        uint64_t imm12 = (w1 >> 10) & 0xFFFu;
+        int shift = (int)((w1 >> 22) & 1u);
+        *bridgeOut = (void *)(base + (uintptr_t)(imm12 << (shift ? 12 : 0)));
+        *patchSizeOut = 12;
+        return 1;
+    }
+
+    // ldr xN, [pc, #off] ; br xN ; <literal>
+    if ((w0 & 0xFF000000u) == 0x58000000u && (w1 & 0xFFFFFC1Fu) == 0xD61F0000u &&
+        (((w1 >> 5) & 31u) == (w0 & 31u))) {
+        int64_t simm = (int64_t)((w0 >> 5) & 0x7FFFFu);
+        if (simm & 0x40000) simm -= 0x80000;
+        uintptr_t litAddr = (uintptr_t)((int64_t)target + (simm << 2));
+        if (litAddr >= target && litAddr < target + 128) {
+            uintptr_t bridge = 0;
+            memcpy(&bridge, (const void *)litAddr, sizeof(bridge));
+            if (bridge) {
+                *bridgeOut = (void *)bridge;
+                *patchSizeOut = 16;
+                return 1;
+            }
+        }
+    }
+
+    return 0;
+}
+
+static int ShadowDecodeTarget(void *methodInfoPtr, void **targetOut, void **bridgeOut,
+                              int *patchSizeOut) {
+    *targetOut = nullptr;
+    *bridgeOut = nullptr;
+    *patchSizeOut = 0;
+    if (!methodInfoPtr) return 0;
+    uintptr_t target = 0;
+    memcpy(&target, (const void *)methodInfoPtr, 8);
+    if (!target) return 0;
+    *targetOut = (void *)target;
+    return ShadowDecodeAt(target, bridgeOut, patchSizeOut);
+}
+
+static void *ShadowRecoverSelf(void *methodInfoPtr, void *trampoline) {
+    void *target = nullptr;
+    void *bridge = nullptr;
+    int patchSize = 0;
+    if (!ShadowDecodeTarget(methodInfoPtr, &target, &bridge, &patchSize)) {
+        if (g_shadowLogs < 10) {
+            g_shadowLogs++;
+            uintptr_t tgt = 0;
+            memcpy(&tgt, (const void *)methodInfoPtr, 8);
+            LOGE("shadow: decode failed methodInfo=%p target=%p", methodInfoPtr, (void *)tgt);
+            if (tgt) {
+                uint32_t tw[4] = {0};
+                memcpy(tw, (const void *)tgt, sizeof(tw));
+                LOGE("shadow:  target words %08x %08x %08x %08x", tw[0], tw[1], tw[2], tw[3]);
+            }
+        }
+        return nullptr;
+    }
+
+    int slot = -1;
+    for (int i = 0; i < g_shadowCount; i++) {
+        if (g_shadows[i].active &&
+            (g_shadows[i].trampoline == trampoline || g_shadows[i].target == target)) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) {
+        if (g_shadowCount >= 64) return nullptr;
+        slot = g_shadowCount++;
+        memset(&g_shadows[slot], 0, sizeof(g_shadows[slot]));
+        g_shadows[slot].target = target;
+        g_shadows[slot].trampoline = trampoline;
+    }
+
+    if (!g_shadows[slot].active) {
+        if (patchSize != 4 && patchSize != 12) {
+            if (g_shadowLogs < 10) {
+                g_shadowLogs++;
+                LOGE("shadow: patchSize=%d unsupported; self recovery disabled for %p",
+                     patchSize, target);
+            }
+            return nullptr;
+        }
+        if (!bridge) return nullptr;
+
+        uint8_t *stub = (uint8_t *)ShadowAllocNear((uint64_t)(uintptr_t)target, patchSize);
+        if (!stub) return nullptr;
+
+        ShadowEmitStub(stub, (uint32_t)slot, (void *)&ShadowHelper, bridge);
+        __builtin___clear_cache((char *)stub, (char *)stub + 128);
+
+        if (!ShadowPatchTarget((uint64_t)(uintptr_t)target, stub, patchSize)) {
+            munmap(stub, 0x1000);
+            return nullptr;
+        }
+        g_shadows[slot].active = 1;
+        LOGI("shadow: installed slot %d target=%p bridge=%p patchSize=%d stub=%p",
+             slot, target, bridge, patchSize, stub);
+    }
+
+    if (g_shadows[slot].rawX0) return (void *)(uintptr_t)g_shadows[slot].rawX0;
+    return nullptr;
+}
+
+#endif // __aarch64__
+
+// HybridCLR routes AOT calls through 12-byte stubs (adrp/add/br), so the
+// Dobby trampoline must be entered with the real native calling convention
+// (x0..x7 + q0..q7, plus a trailing MethodInfo*) instead of a raw void.
+
+static int DetectHomogeneousFloatStruct(void *klass, int *count) {
+    if (!klass || !g_classGetFields || !g_fieldGetType || !g_typeGetType) return 0;
+    void *iter = nullptr;
+    void *field = nullptr;
+    int floats = 0, doubles = 0, others = 0;
+    while ((field = g_classGetFields(klass, &iter)) != nullptr) {
+        const void *ft = g_fieldGetType(field);
+        int t = ft ? g_typeGetType(ft) : -1;
+        if (t == kTypeR4) floats++;
+        else if (t == kTypeR8) doubles++;
+        else others++;
+        if (floats + doubles + others > 4) return 0;
+    }
+    int total = floats + doubles + others;
+    if (total == 0 || others != 0) return 0;
+    if (floats == total) { *count = floats; return 1; }
+    if (doubles == total) { *count = doubles; return 2; }
+    return 0;
+}
+
+#if defined(__aarch64__)
+__attribute__((naked)) static void *mod2_call_tramp(void *fn, uint64_t *xr, double *vr) {
+    __asm__ volatile(
+        "stp x29, x30, [sp, #-16]!\n\t"
+        "mov x15, x0\n\t"
+        "mov x14, x1\n\t"
+        "mov x13, x2\n\t"
+        "ldp x0, x1, [x14, #0]\n\t"
+        "ldp x2, x3, [x14, #16]\n\t"
+        "ldp x4, x5, [x14, #32]\n\t"
+        "ldp x6, x7, [x14, #48]\n\t"
+        "ldp q0, q1, [x13, #0]\n\t"
+        "ldp q2, q3, [x13, #32]\n\t"
+        "ldp q4, q5, [x13, #64]\n\t"
+        "ldp q6, q7, [x13, #96]\n\t"
+        "blr x15\n\t"
+        "ldp x29, x30, [sp], #16\n\t"
+        "ret\n\t"
+    );
+}
+#endif
+
+// Returns the original method result. On success *ok is set to true; on failure
+// (unsupported signature) the caller must not use the return value.
+static void *MarshalAndCallOrig(void *trampoline, void *methodInfoPtr, void *self,
+                                void **args, bool *ok) {
+    *ok = false;
+    if (!trampoline || !methodInfoPtr) return nullptr;
+    if (!g_methodParamCount || !g_methodParam || !g_typeGetType) return nullptr;
+
+    uint32_t argc = g_methodParamCount(methodInfoPtr);
+    if (argc > 6) {
+        static int overLogs = 0;
+        if (overLogs++ < 8) LOGE("marshal: argc=%u (>6) unsupported for method %p", argc, methodInfoPtr);
+        return nullptr;
+    }
+
+    // A large struct return travels through a hidden "sret" pointer in x0, which
+    // shifts every argument. Refuse instead of corrupting memory.
+    if (g_methodGetReturnType && g_typeGetType && g_classFromType && g_classValueSize) {
+        const void *rt = g_methodGetReturnType(methodInfoPtr);
+        int rtTag = rt ? g_typeGetType(rt) : kTypeVoid;
+        if (rtTag == kTypeValueType || rtTag == kTypeGenericInst) {
+            void *rk = g_classFromType((void *)rt);
+            uint32_t rsize = 0;
+            if (rk) { uint32_t align = 0; rsize = (uint32_t)g_classValueSize(rk, &align); }
+            if (rsize > 16) {
+                static int sretLogs = 0;
+                if (sretLogs++ < 8)
+                    LOGE("marshal: %u-byte struct return (sret) unsupported for method %p",
+                         rsize, methodInfoPtr);
+                return nullptr;
+            }
+        }
+    }
+
+    uint64_t xr[8] __attribute__((aligned(16))) = {0, 0, 0, 0, 0, 0, 0, 0};
+    double   vr[8] __attribute__((aligned(16))) = {0};
+
+    bool isStatic = (self == nullptr);
+    if (g_methodGetFlags) {
+        uint32_t ifl = 0;
+        isStatic = (g_methodGetFlags(methodInfoPtr, &ifl) & 0x10u) != 0;
+    }
+
+    int xi = 0, vi = 0;
+    bool bad = false;
+
+    if (!isStatic) {
+        if (xi >= 8) bad = true;
+        else xr[xi++] = (uint64_t)(uintptr_t)self;
+    }
+
+    for (uint32_t i = 0; i < argc && !bad; i++) {
+        const void *pt = g_methodParam(methodInfoPtr, i);
+        int t = pt ? g_typeGetType(pt) : kTypeI4;
+        void *slot = args ? args[i] : nullptr;
+
+        if (t == kTypeR4) {
+            if (vi >= 8) { bad = true; break; }
+            float f = 0.0f;
+            if (slot) memcpy(&f, slot, 4);
+            memcpy(&vr[vi], &f, 4);
+            vi++;
+        } else if (t == kTypeR8) {
+            if (vi >= 8) { bad = true; break; }
+            double d = 0.0;
+            if (slot) memcpy(&d, slot, 8);
+            memcpy(&vr[vi], &d, 8);
+            vi++;
+        } else if (t == kTypeValueType || t == kTypeGenericInst) {
+            void *klass = g_classFromType ? g_classFromType((void *)pt) : nullptr;
+            uint32_t size = 0;
+            if (klass && g_classValueSize) { uint32_t align = 0; size = (uint32_t)g_classValueSize(klass, &align); }
+            int hcount = 0;
+            int hfa = klass ? DetectHomogeneousFloatStruct(klass, &hcount) : 0;
+            if (hfa == 1) {
+                for (int k = 0; k < hcount && vi < 8; k++) {
+                    float f = 0.0f;
+                    if (slot) memcpy(&f, (const char *)slot + (size_t)k * 4, 4);
+                    memcpy(&vr[vi], &f, 4);
+                    vi++;
+                }
+            } else if (hfa == 2) {
+                for (int k = 0; k < hcount && vi < 8; k++) {
+                    double d = 0.0;
+                    if (slot) memcpy(&d, (const char *)slot + (size_t)k * 8, 8);
+                    memcpy(&vr[vi], &d, 8);
+                    vi++;
+                }
+            } else if (size > 16) {
+                if (xi >= 8) { bad = true; break; }
+                xr[xi++] = (uint64_t)(uintptr_t)slot;
+            } else {
+                uint64_t v = 0;
+                if (slot && size > 0) memcpy(&v, slot, size > 8 ? 8 : size);
+                if (xi >= 8) { bad = true; break; }
+                xr[xi++] = v;
+                if (size > 8) {
+                    uint64_t v2 = 0;
+                    if (slot) memcpy(&v2, (const char *)slot + 8, size - 8);
+                    if (xi >= 8) { bad = true; break; }
+                    xr[xi++] = v2;
+                }
+            }
+        } else if (t == kTypeClass || t == kTypeString || t == kTypeArray || t == kTypeObject ||
+                   t == kTypeSzArray || t == kTypePtr || t == kTypeFnPtr ||
+                   t == kTypeVar || t == kTypeByRef) {
+            if (xi >= 8) { bad = true; break; }
+            xr[xi++] = (uint64_t)(uintptr_t)slot;
+        } else {
+            uint64_t v = 0;
+            if (slot) {
+                if (t == kTypeI1 || t == kTypeU1 || t == kTypeBoolean || t == kTypeI2 ||
+                    t == kTypeU2 || t == kTypeI4 || t == kTypeU4 || t == kTypeChar) {
+                    int32_t tmp32 = 0;
+                    memcpy(&tmp32, slot, 4);
+                    v = (uint64_t)(uint32_t)tmp32;
+                } else {
+                    memcpy(&v, slot, 8);
+                }
+            }
+            if (xi >= 8) { bad = true; break; }
+            xr[xi++] = v;
+        }
+    }
+    if (!bad) {
+        if (xi < 8) xr[xi++] = (uint64_t)(uintptr_t)methodInfoPtr;
+        else bad = true;
+    }
+    if (bad) return nullptr;
+
+#if defined(__aarch64__)
+    *ok = true;
+    return mod2_call_tramp(trampoline, xr, vr);
+#else
+    return nullptr;
+#endif
 }
 
 void *mod2_invoke_orig(void *methodInfoPtr, void *trampoline, void *self,
@@ -445,8 +1056,47 @@ void *mod2_invoke_orig(void *methodInfoPtr, void *trampoline, void *self,
     if (!g_ready || !methodInfoPtr) return nullptr;
 
     if (trampoline) {
-        typedef void* (*NativeMethodFn)(void* self, void** args);
-        return ((NativeMethodFn)trampoline)(self, args);
+        bool instanceMethod = false;
+        if (g_methodGetFlags) {
+            uint32_t f = 0;
+            g_methodGetFlags(methodInfoPtr, &f);
+            instanceMethod = ((f & 0x10u) == 0u);
+        }
+
+        if (instanceMethod && self == nullptr) {
+#if defined(__aarch64__)
+            void *recovered = ShadowRecoverSelf(methodInfoPtr, trampoline);
+            if (recovered) {
+                static int recLogs = 0;
+                if (recLogs++ < 20) {
+                    const char *mn = g_methodGetName ? g_methodGetName(methodInfoPtr) : "?";
+                    LOGI("mod2_invoke_orig: recovered self=%p for %s", recovered, mn ? mn : "?");
+                }
+                self = recovered;
+            } else
+#endif
+            {
+                static int nullLogs = 0;
+                if (nullLogs++ < 20) {
+                    const char *mn = g_methodGetName ? g_methodGetName(methodInfoPtr) : "?";
+                    LOGE("mod2_invoke_orig: instance method %s (%p) without self; "
+                         "original call skipped instead of crashing",
+                         mn ? mn : "?", methodInfoPtr);
+                }
+                return nullptr;
+            }
+        }
+
+        bool ok = false;
+        void *res = MarshalAndCallOrig(trampoline, methodInfoPtr, self, args, &ok);
+        if (ok) return res;
+
+        static int warnLogs = 0;
+        if (warnLogs++ < 20) {
+            LOGE("mod2_invoke_orig: could not rebuild ABI for method=%p self=%p; "
+                 "original call skipped", methodInfoPtr, self);
+        }
+        return nullptr;
     }
 
     void *excLocal = exception ? *exception : nullptr;
@@ -633,20 +1283,38 @@ typedef struct { Il2CppObjectHeaderCompat obj; void *bounds; uintptr_t max_lengt
 static void *g_gameObjectCtorTarget     = nullptr;
 static void *g_gameObjectCtorOrig       = nullptr;
 static bool  g_gameObjectCtorInstalled  = false;
+static int   g_ctorLogs                 = 0;
+
+static void CtorLog(const char *fmt, ...) {
+    if (g_ctorLogs >= 64) return;
+    ++g_ctorLogs;
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    LOGI("mod2 ctor#%d: %s", g_ctorLogs, buf);
+}
 
 static void GameObjectCtorHook(void *self, void *name, void *componentsArray, void *methodInfo) {
     if (!self) return;
+
+    Il2CppArrayHeaderCompat *arr = (Il2CppArrayHeaderCompat*)componentsArray;
+    uintptr_t length = (arr && arr->max_length < 64) ? arr->max_length : 0;
+    CtorLog("enter self=%p comps=%p len=%u", self, componentsArray, (unsigned)length);
+
+    // The real ctor is invoked without the component list, the components are
+    // then routed through AddComponentHook so the compat layer sees them.
     if (g_gameObjectCtorOrig) {
         typedef void (*GameObjectCtorFn)(void*, void*, void*, void*);
         ((GameObjectCtorFn)g_gameObjectCtorOrig)(self, name, nullptr, methodInfo);
     }
-    if (!componentsArray) return;
-    Il2CppArrayHeaderCompat *arr = (Il2CppArrayHeaderCompat*)componentsArray;
-    uintptr_t length = arr->max_length;
+
+    if (!arr || length == 0) return;
     for (uintptr_t i = 0; i < length; ++i) {
         void *typeObj = arr->vector[i];
         if (typeObj) {
-            AddCompLog("ctor add component %s", TypeNameForLog(typeObj));
+            CtorLog("add component %s", TypeNameForLog(typeObj));
             AddComponentHook(self, typeObj, nullptr);
         }
     }
@@ -656,10 +1324,29 @@ int mod2_install_gameobject_ctor_hook(void *ctorTargetAddr) {
     if (g_gameObjectCtorInstalled) return 1;
     if (!ctorTargetAddr || !g_ready) return 0;
     g_gameObjectCtorTarget = ctorTargetAddr;
-    int rc = g_dobbyHook(ctorTargetAddr, (void *)GameObjectCtorHook, (void **)&g_gameObjectCtorOrig);
+
+    // Diagnostic + target selection.
+    void *hookTarget = ctorTargetAddr;
+#if defined(__aarch64__)
+    void *impl = nullptr;
+    int stubSize = 0;
+    if (ShadowDecodeAt((uintptr_t)ctorTargetAddr, &impl, &stubSize)) {
+        LOGI("GameObject ctor entry=%p is a %d-byte stub -> impl=%p",
+             ctorTargetAddr, stubSize, impl);
+        if (stubSize == 12 && impl && impl != ctorTargetAddr) hookTarget = impl;
+    } else {
+        uint32_t w[4] = {0};
+        memcpy(w, ctorTargetAddr, sizeof(w));
+        LOGI("GameObject ctor entry=%p is not a known stub; words %08x %08x %08x %08x",
+             ctorTargetAddr, w[0], w[1], w[2], w[3]);
+    }
+#endif
+
+    int rc = g_dobbyHook(hookTarget, (void *)GameObjectCtorHook, (void **)&g_gameObjectCtorOrig);
     g_gameObjectCtorInstalled = (rc == 0);
-    if (!g_gameObjectCtorInstalled) LOGE("GameObject ctor hook failed rc=%d", rc);
-    else LOGI("GameObject(string, params Type[]) ctor hook installed.");
+    if (!g_gameObjectCtorInstalled) LOGE("GameObject ctor hook failed rc=%d (target=%p)", rc, hookTarget);
+    else LOGI("GameObject(string, params Type[]) ctor hook installed (target=%p orig=%p).",
+              hookTarget, g_gameObjectCtorOrig);
     return g_gameObjectCtorInstalled ? 1 : 0;
 }
 

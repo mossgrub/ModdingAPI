@@ -37,6 +37,8 @@ int mod2_install_gameobject_ctor_hook(void *ctorTargetAddr);
 int mod2_install_resource_hooks(void *targetStreamPtr, void *targetNamesPtr,
                                 void *helperStreamMethod, void *helperNamesMethod);
 
+int mod2_install_takemp_hook(void *takeMPMethodPtr);
+
 #ifdef __cplusplus
 }
 #endif
