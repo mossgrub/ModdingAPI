@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
@@ -1765,6 +1765,13 @@ namespace Modding
         internal static void OnNewGame()
         {
             Logger.APILogger.LogFine("OnNewGame Invoked");
+
+            try
+            {
+                Logger.APILogger.LogDebug("[OnNewGame] HeroController.instance=" +
+                    (HeroController.instance == null ? "null" : "present"));
+            }
+            catch (System.Exception ex) { Logger.APILogger.LogWarn("[OnNewGame] hero probe failed: " + ex.Message); }
 
             if (NewGameHook == null)
             {

@@ -59,7 +59,6 @@ namespace Modding
             return null;
         }
 
-        // Scans the target signature and returns a description or null 
         private static string DescribeUnsupportedSignature(MethodInfo targetMethod)
         {
             if (!targetMethod.IsStatic)
@@ -96,6 +95,12 @@ namespace Modding
 
             public Delegate Replacement;
             public int[] RefIndexes;
+
+            public MethodInfo Target;
+            public IntPtr NativeMethod;
+            public IntPtr Trampoline;
+            public bool InstanceCall;
+            public Type OrigParamType;
         }
 
         private static readonly ConcurrentDictionary<Type, BridgeState> BridgeStates = new ConcurrentDictionary<Type, BridgeState>();
@@ -426,8 +431,6 @@ namespace Modding
             return GetDelegateTypeForMethod(method, out _);
         }
 
-        // AOT bridges for reference types use IntPtr in the native signature, because some
-        // types cannot be marshalled directly through the HybridCLR reverse-P/Invoke wrapper.
         private static bool IsRefTypeForBridge(Type t)
         {
             if (t == null) return false;
@@ -489,7 +492,6 @@ namespace Modding
             return false;
         }
 
-        // Builds the delegate type for a method whose Nullable<T> params are flattened to DieCause
         private static Type GetFlattenDelegateTypeForMethod(MethodInfo method, out string error)
         {
             error = null;
@@ -654,11 +656,57 @@ namespace Modding
             }
         }
 
+        private static void TryRebuildOrig(BridgeState st)
+        {
+            if (st.Orig != null || st.Trampoline == IntPtr.Zero ||
+                st.NativeMethod == IntPtr.Zero || st.Target == null)
+                return;
+
+            try
+            {
+                var adapter = new OrigAdapter
+                {
+                    Target = st.Target,
+                    NativeMethod = st.NativeMethod,
+                    Trampoline = st.Trampoline,
+                    InstanceCall = st.InstanceCall
+                };
+                Type pt = st.OrigParamType;
+                if (pt == null && st.Replacement != null)
+                {
+                    var parms = st.Replacement.Method?.GetParameters();
+                    if (parms != null && parms.Length > 0)
+                        pt = parms[0].ParameterType;
+                }
+                st.Orig = CreateManagedOrigDelegate(pt, st.Target, adapter);
+                Logger.APILogger.LogDebug("Rebuilt lost Orig for " + st.Target.Name);
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogError("Orig rebuild failed for " +
+                    (st.Target?.Name ?? "?") + ": " + ex);
+            }
+        }
+
         internal static R InvokeBridgeR<R, TSlot>(object[] args)
         {
             LogBridgeFirstInvoke(typeof(TSlot));
-            if (!BridgeStates.TryGetValue(typeof(TSlot), out BridgeState st) || st.Orig == null)
+
+            if (!BridgeStates.TryGetValue(typeof(TSlot), out BridgeState st))
                 return default;
+
+            TryRebuildOrig(st);
+
+            if (st.Orig == null)
+            {
+                Logger.APILogger.LogError(
+                    "DetourBridge: " + typeof(TSlot).Name +
+                    " has no Orig and cannot recover; returning null. " +
+                    "(Target=" + (st.Target?.Name ?? "?") +
+                    " Trampoline=0x" + st.Trampoline.ToInt64().ToString("X") +
+                    " Handlers=" + (st.Handlers?.Count ?? 0) + ")");
+                return default;
+            }
 
             int argLen = args != null ? args.Length : 0;
             if (argLen > 0 && st.RefIndexes != null)
@@ -680,28 +728,39 @@ namespace Modding
             R result = default;
             bool invoked = false;
 
-            try
+            lock (st.Handlers)
             {
-                lock (st.Handlers)
+                if (st.Handlers.Count > 0)
                 {
-                    if (st.Handlers.Count > 0)
+                    for (int i = 0; i < st.Handlers.Count; i++)
                     {
-                        for (int i = 0; i < st.Handlers.Count; i++)
+                        try
                         {
                             object r = st.Handlers[i].DynamicInvoke(full);
                             if (r is R rr) { result = rr; invoked = true; }
                         }
+                        catch (Exception ex)
+                        {
+                            Logger.APILogger.LogError(
+                                "DetourBridge hook invocation error [" +
+                                typeof(TSlot).Name + " #" + i + "]: " + ex);
+                        }
                     }
-                    else if (st.Replacement != null)
+                }
+                else if (st.Replacement != null)
+                {
+                    try
                     {
                         object r = st.Replacement.DynamicInvoke(full);
                         if (r is R rr) { result = rr; invoked = true; }
                     }
+                    catch (Exception ex)
+                    {
+                        Logger.APILogger.LogError(
+                            "DetourBridge hook invocation error [" +
+                            typeof(TSlot).Name + " replacement]: " + ex);
+                    }
                 }
-            }
-            catch (Exception ex)
-            {
-                Logger.APILogger.LogError("DetourBridge hook invocation error: " + ex);
             }
 
             return invoked ? result : default;
@@ -751,8 +810,6 @@ namespace Modding
             typeof(DetourBridge).GetMethod(nameof(BridgeR6), BindingFlags.NonPublic | BindingFlags.Static)
         };
 
-        // Generic bridges built at runtime via MakeGenericMethod never get a wrapper,
-        // so we must provide one concrete annotated method per target signature.
         private sealed class LocationSlot { }
 
         private static readonly MethodInfo LocationBridgeMethod =
@@ -788,15 +845,36 @@ namespace Modding
             catch { return string.Empty; }
         }
 
-        // Generic installer for a concrete reverse-pinvoke bridge. <paramref name="concreteBridge"/>
-        // must be a non-generic static method annotated with [AOT.MonoPInvokeCallback(typeof(delegateType))]
         public static bool TryInstallConcreteDetour(MethodInfo target, Type slotType, Type delegateType, Type origType,
             MethodInfo concreteBridge, Delegate replacement, int[] refIndexes, out Delegate orig, out string error)
         {
             orig = null;
             error = null;
 
-            BridgeStates[slotType] = new BridgeState { Handlers = new List<Delegate> { replacement }, RefIndexes = refIndexes };
+            if (Installed.TryGetValue(target, out InstalledHook extHook) &&
+                extHook.Slot != slotType &&
+                BridgeStates.TryGetValue(extHook.Slot, out BridgeState extSt) &&
+                extSt.Orig != null && extSt.Trampoline != IntPtr.Zero)
+            {
+                lock (extSt.Handlers)
+                {
+                    extSt.Handlers.Clear();
+                    if (replacement != null) extSt.Handlers.Add(replacement);
+                }
+                orig = extSt.Orig;
+                return true;
+            }
+
+            BridgeState st0;
+            if (!BridgeStates.TryGetValue(slotType, out st0) || st0.Trampoline == IntPtr.Zero)
+            {
+                st0 = new BridgeState { Handlers = new List<Delegate> { replacement }, RefIndexes = refIndexes };
+                BridgeStates[slotType] = st0;
+            }
+            else
+            {
+                lock (st0.Handlers) { st0.Handlers.Clear(); st0.Handlers.Add(replacement); }
+            }
 
             IntPtr targetAddr = GetNativeMethodAddress(target);
             if (targetAddr == IntPtr.Zero) { error = "cannot get target address."; return false; }
@@ -861,7 +939,16 @@ namespace Modding
                 return false;
             }
 
-            if (BridgeStates.TryGetValue(slotType, out BridgeState s2)) { s2.Orig = orig; s2.Bridge = bridgeDel; }
+            if (BridgeStates.TryGetValue(slotType, out BridgeState s2))
+            {
+                s2.Orig = orig;
+                s2.Bridge = bridgeDel;
+                s2.Target = target;
+                s2.NativeMethod = nativeMethod;
+                s2.Trampoline = trampPtr;
+                s2.InstanceCall = !target.IsStatic;
+                s2.OrigParamType = origParamType;
+            }
             Logger.APILogger.LogDebug("Concrete detour installed for " + target.Name +
                 " (bridge 0x" + bridgeAddr.ToInt64().ToString("X") + ").");
             return true;
@@ -893,8 +980,6 @@ namespace Modding
 
         #region concrete bridges (MonoPInvokeCallback) for game hooks routed via On.*
 
-        // Each game hook signature needs one concrete, non-generic static method annotated with
-        // [AOT.MonoPInvokeCallback(...)] so HybridCLR can emit a reverse-P/Invoke wrapper.
         private sealed class StartSlashSlot { }
         private sealed class OnDisableSlot { }
         private sealed class TakeDamageSlot { }
