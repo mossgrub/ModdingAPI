@@ -1544,7 +1544,7 @@ extern "C"
 
     static void AddCompLog(const char *fmt, ...)
     {
-        if (g_addCompLogs >= 240)
+        if (g_addCompLogs >= 2000)
             return;
         ++g_addCompLogs;
 
@@ -1631,32 +1631,143 @@ extern "C"
         return oc;
     }
 
-    // Returns an already-attached component of the given type, or nullptr.
+    struct Mod2CtorComponentEntry
+    {
+        void *self;
+        void *klass;
+        void *component;
+    };
+
+    struct Mod2CtorFrame
+    {
+        void *self;
+        int cacheBegin;
+    };
+
+    static thread_local Mod2CtorComponentEntry g_ctorComponentCache[128];
+    static thread_local int g_ctorComponentCacheCount = 0;
+
+    static thread_local Mod2CtorFrame g_ctorFrames[8];
+    static thread_local int g_ctorFrameDepth = 0;
+
+    static void *GetComponentTypeClass(void *type)
+    {
+        if (!type)
+            return nullptr;
+
+        if (g_typeFromReflection && g_classFromType)
+        {
+            void *il2cppType = g_typeFromReflection(type);
+
+            if (il2cppType)
+            {
+                void *klass = g_classFromType(il2cppType);
+
+                if (klass)
+                    return klass;
+            }
+        }
+
+        return type;
+    }
+
+    static void *FindCtorCachedComponent(void *self, void *klass)
+    {
+        if (!self || !klass || g_ctorFrameDepth <= 0)
+            return nullptr;
+
+        Mod2CtorFrame &frame = g_ctorFrames[g_ctorFrameDepth - 1];
+
+        if (frame.self != self)
+            return nullptr;
+
+        for (int i = g_ctorComponentCacheCount - 1; i >= frame.cacheBegin; --i)
+        {
+            Mod2CtorComponentEntry &entry = g_ctorComponentCache[i];
+
+            if (entry.self == self &&
+                entry.klass == klass &&
+                entry.component)
+            {
+                return entry.component;
+            }
+        }
+
+        return nullptr;
+    }
+
+    static void RememberCtorComponent(void *self, void *klass, void *component)
+    {
+        if (!self || !klass || !component || g_ctorFrameDepth <= 0)
+            return;
+
+        Mod2CtorFrame &frame = g_ctorFrames[g_ctorFrameDepth - 1];
+
+        if (frame.self != self)
+            return;
+
+        for (int i = frame.cacheBegin; i < g_ctorComponentCacheCount; ++i)
+        {
+            Mod2CtorComponentEntry &entry = g_ctorComponentCache[i];
+
+            if (entry.self == self && entry.klass == klass)
+            {
+                entry.component = component;
+                return;
+            }
+        }
+
+        if (g_ctorComponentCacheCount >=
+            (int)(sizeof(g_ctorComponentCache) / sizeof(g_ctorComponentCache[0])))
+        {
+            return;
+        }
+
+        Mod2CtorComponentEntry &entry =
+            g_ctorComponentCache[g_ctorComponentCacheCount++];
+
+        entry.self = self;
+        entry.klass = klass;
+        entry.component = component;
+    }
+
     static void *GetComponentExisting(void *self, void *type)
     {
         if (!self || !type || !g_getComponentMethodInfo)
             return nullptr;
 
+        void *managedResult = nullptr;
+        void *exception = nullptr;
+
         if (g_invoke)
         {
-            void *args[1] = { type };
-            void *exc = nullptr;
-            void *res = g_invoke(g_getComponentMethodInfo, self, args, &exc);
-            if (exc)
+            void *args[1] = {type};
+
+            managedResult = g_invoke(
+                g_getComponentMethodInfo,
+                self,
+                args,
+                &exception);
+
+            if (exception)
             {
                 static int probeExcLogs = 0;
-                if (probeExcLogs++ < 5)
-                    LOGE("GetComponent probe raised a managed exception");
+
+                if (probeExcLogs++ < 20)
+                {
+                    LOGE(
+                        "GetComponent probe exception: self=%p type=%p methodInfo=%p exc=%p",
+                        self,
+                        type,
+                        g_getComponentMethodInfo,
+                        exception);
+                }
+
                 return nullptr;
             }
-            if (res)
-                return res;
-        }
 
-        if (g_getComponentFuncPtr)
-        {
-            typedef void *(*GetComponentFn)(void *, void *, void *);
-            return ((GetComponentFn)g_getComponentFuncPtr)(self, type, g_getComponentMethodInfo);
+            if (managedResult)
+                return managedResult;
         }
 
         return nullptr;
@@ -1666,22 +1777,120 @@ extern "C"
     {
         if (!self || !type)
             return nullptr;
-        AddCompLog("AddComponent(%s) self=%p typeObjClass=%s", TypeNameForLog(type), self, ObjClassNameForLog(type));
 
+        const char *typeName = TypeNameForLog(type);
+        void *typeClass = GetComponentTypeClass(type);
+
+        AddCompLog(
+            "AddComponent(%s) self=%p type=%p class=%p typeObjClass=%s",
+            typeName,
+            self,
+            type,
+            typeClass,
+            ObjClassNameForLog(type));
+
+        // This catches components which were already created earlier
+        // during the same constructor, including components introduced
+        // indirectly by RequireComponent/dependencies.
+
+        if (g_ctorFrameDepth > 0 && typeClass)
+        {
+            void *cached = FindCtorCachedComponent(self, typeClass);
+
+            if (cached)
+            {
+                AddCompLog(
+                    "constructor cache hit for %s -> %p",
+                    typeName,
+                    cached);
+
+                return cached;
+            }
+        }
+
+        // Ask Unity normally.
         void *existing = GetComponentExisting(self, type);
-        AddCompLog("GetComponent(%s) -> existing=%p", TypeNameForLog(type), existing);
+
+        AddCompLog(
+            "GetComponent(%s) -> existing=%p",
+            typeName,
+            existing);
+
         if (existing)
         {
-            AddCompLog("reuse existing component instead of adding a duplicate");
+            AddCompLog(
+                "reusing existing component %s -> %p",
+                typeName,
+                existing);
+
+            if (typeClass)
+                RememberCtorComponent(self, typeClass, existing);
+
             return existing;
         }
 
+        // Nothing was found. Let Unity perform the real AddComponent.
+
+        void *result = nullptr;
+
         if (g_addComponentOrig)
         {
-            AddCompLog("fallback to orig AddComponent(%s)", TypeNameForLog(type));
-            typedef void *(*AddComponentFn)(void *, void *, void *);
-            return ((AddComponentFn)g_addComponentOrig)(self, type, methodInfo);
+            typedef void *(*AddComponentFn)(
+                void *,
+                void *,
+                void *);
+
+            AddCompLog(
+                "calling original AddComponent(%s)",
+                typeName);
+
+            result = ((AddComponentFn)g_addComponentOrig)(
+                self,
+                type,
+                methodInfo);
+
+            AddCompLog(
+                "original AddComponent(%s) returned %p",
+                typeName,
+                result);
         }
+
+        // Remember every successfully created component during the current constructor.
+
+        if (result && typeClass)
+        {
+            RememberCtorComponent(
+                self,
+                typeClass,
+                result);
+
+            return result;
+        }
+
+        // Unity can report a duplicate internally and return null even
+        // though the component ended up attached to the GameObject.
+
+        void *recovered = GetComponentExisting(self, type);
+
+        if (recovered)
+        {
+            AddCompLog(
+                "post-add recovery for %s -> %p",
+                typeName,
+                recovered);
+
+            if (typeClass)
+                RememberCtorComponent(
+                    self,
+                    typeClass,
+                    recovered);
+
+            return recovered;
+        }
+
+        AddCompLog(
+            "AddComponent(%s) produced no component",
+            typeName);
 
         return nullptr;
     }
@@ -1729,7 +1938,7 @@ extern "C"
 
     static void CtorLog(const char *fmt, ...)
     {
-        if (g_ctorLogs >= 64)
+        if (g_ctorLogs >= 256)
             return;
         ++g_ctorLogs;
         char buf[512];
@@ -1740,33 +1949,112 @@ extern "C"
         LOGI("mod2 ctor#%d: %s", g_ctorLogs, buf);
     }
 
-    static void GameObjectCtorHook(void *self, void *name, void *componentsArray, void *methodInfo)
+    static void GameObjectCtorHook(
+        void *self,
+        void *name,
+        void *componentsArray,
+        void *methodInfo)
     {
         if (!self)
             return;
 
-        // Read-only diagnostics, we only inspect the component list.
-        Il2CppArrayHeaderCompat *arr = (Il2CppArrayHeaderCompat *)componentsArray;
-        uintptr_t length = (arr && arr->max_length < 64) ? arr->max_length : 0;
-        const char *arrClass = arr ? ObjClassNameForLog((void *)arr) : "null";
-        CtorLog("enter self=%p comps=%p len=%u class=%s",
-                self, componentsArray, (unsigned)length, arrClass);
+        // Each constructor gets its own frame, so nested GameObject
+        // constructors do not contaminate one another.
+
+        bool framePushed = false;
+
+        if (g_ctorFrameDepth <
+            (int)(sizeof(g_ctorFrames) / sizeof(g_ctorFrames[0])))
+        {
+            Mod2CtorFrame &frame =
+                g_ctorFrames[g_ctorFrameDepth++];
+
+            frame.self = self;
+            frame.cacheBegin = g_ctorComponentCacheCount;
+
+            framePushed = true;
+        }
+        else
+        {
+            LOGE(
+                "GameObject ctor cache stack overflow for self=%p",
+                self);
+        }
+
+        Il2CppArrayHeaderCompat *arr =
+            (Il2CppArrayHeaderCompat *)componentsArray;
+
+        uintptr_t length =
+            (arr && arr->max_length < 64)
+                ? arr->max_length
+                : 0;
+
+        const char *arrClass =
+            arr ? ObjClassNameForLog((void *)arr) : "null";
+
+        CtorLog(
+            "enter self=%p comps=%p len=%u class=%s",
+            self,
+            componentsArray,
+            (unsigned)length,
+            arrClass);
+
         for (uintptr_t i = 0; arr && i < length; ++i)
         {
             void *typeObj = arr->vector[i];
+
             if (typeObj)
-                CtorLog("  comp[%u]=%s", (unsigned)i, TypeNameForLog(typeObj));
+            {
+                CtorLog(
+                    "  comp[%u]=%s type=%p class=%p",
+                    (unsigned)i,
+                    TypeNameForLog(typeObj),
+                    typeObj,
+                    GetComponentTypeClass(typeObj));
+            }
             else
-                CtorLog("  comp[%u]=null", (unsigned)i);
+            {
+                CtorLog(
+                    "  comp[%u]=null",
+                    (unsigned)i);
+            }
         }
 
-        // Pass through to the real constructor with the original argument list so
-        // the engine creates and registers the components exactly as usual.
+        // Unity's GameObject(string, Type[]) constructor itself creates
+        // the GameObject and then invokes AddComponent for each requested
+        // Type, so the AddComponent hook above will observe that process.
+
         if (g_gameObjectCtorOrig)
         {
-            typedef void (*GameObjectCtorFn)(void *, void *, void *, void *);
-            ((GameObjectCtorFn)g_gameObjectCtorOrig)(self, name, componentsArray, methodInfo);
+            typedef void (*GameObjectCtorFn)(
+                void *,
+                void *,
+                void *,
+                void *);
+
+            ((GameObjectCtorFn)g_gameObjectCtorOrig)(
+                self,
+                name,
+                componentsArray,
+                methodInfo);
         }
+
+        // Destroy this constructor's temporary component cache.
+
+        if (framePushed)
+        {
+            Mod2CtorFrame &frame =
+                g_ctorFrames[g_ctorFrameDepth - 1];
+
+            g_ctorComponentCacheCount =
+                frame.cacheBegin;
+
+            --g_ctorFrameDepth;
+        }
+
+        CtorLog(
+            "leave self=%p",
+            self);
     }
 
     static bool Mod2FlagNextToLog(const char *name)
