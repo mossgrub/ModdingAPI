@@ -445,6 +445,15 @@ static const char *ResolvePathFromAssemblyObject(void *self)
     return nullptr;
 }
 
+// Optional MethodInfo for System.Type.get_FullName. Only used to print real
+// type names in the native diagnostics instead of the literal RuntimeType.
+static void *g_typeFullNameMethodInfo = nullptr;
+
+extern "C" void mod2_set_type_name_resolver(void *methodInfo)
+{
+    g_typeFullNameMethodInfo = methodInfo;
+}
+
 static void *g_locationResolverMethodInfo = nullptr;
 
 extern "C" void mod2_set_location_resolver(void *resolverMethodInfo)
@@ -1564,6 +1573,25 @@ extern "C"
         return "?";
     }
 
+    // Il2CppString layout: klass, monitor, int32 length, utf16 chars[].
+    static bool CopyIl2CppStringAscii(void *strObj, char *out, size_t outLen)
+    {
+        if (!strObj || !out || outLen < 2)
+            return false;
+        int32_t n = *((const int32_t *)((const char *)strObj + 16));
+        if (n <= 0 || n > 512)
+            return false;
+        const uint16_t *chars = (const uint16_t *)((const char *)strObj + 20);
+        size_t j = 0;
+        for (int32_t i = 0; i < n && j + 1 < outLen; ++i)
+        {
+            uint16_t ch = chars[i];
+            out[j++] = (ch < 0x80) ? (char)ch : 63;
+        }
+        out[j] = 0;
+        return j > 0;
+    }
+
     static const char *TypeNameForLog(void *typeObj)
     {
         if (!typeObj)
@@ -1574,6 +1602,17 @@ extern "C"
 
         if (strcmp(oc, "Type") != 0 && strcmp(oc, "RuntimeType") != 0 && strcmp(oc, "MonoType") != 0)
             return oc;
+
+        if (g_typeFullNameMethodInfo && g_invoke)
+        {
+            static char nameBufs[4][256];
+            static int nameSlot = 0;
+            void *exc = nullptr;
+            void *strObj = g_invoke(g_typeFullNameMethodInfo, typeObj, nullptr, &exc);
+            nameSlot = (nameSlot + 1) & 3;
+            if (!exc && CopyIl2CppStringAscii(strObj, nameBufs[nameSlot], sizeof(nameBufs[0])))
+                return nameBufs[nameSlot];
+        }
 
         if (g_typeFromReflection && g_classFromType && g_classGetName)
         {
@@ -1592,34 +1631,49 @@ extern "C"
         return oc;
     }
 
+    // Returns an already-attached component of the given type, or nullptr.
+    static void *GetComponentExisting(void *self, void *type)
+    {
+        if (!self || !type || !g_getComponentMethodInfo)
+            return nullptr;
+
+        if (g_invoke)
+        {
+            void *args[1] = { type };
+            void *exc = nullptr;
+            void *res = g_invoke(g_getComponentMethodInfo, self, args, &exc);
+            if (exc)
+            {
+                static int probeExcLogs = 0;
+                if (probeExcLogs++ < 5)
+                    LOGE("GetComponent probe raised a managed exception");
+                return nullptr;
+            }
+            if (res)
+                return res;
+        }
+
+        if (g_getComponentFuncPtr)
+        {
+            typedef void *(*GetComponentFn)(void *, void *, void *);
+            return ((GetComponentFn)g_getComponentFuncPtr)(self, type, g_getComponentMethodInfo);
+        }
+
+        return nullptr;
+    }
+
     static void *AddComponentHook(void *self, void *type, void *methodInfo)
     {
         if (!self || !type)
             return nullptr;
         AddCompLog("AddComponent(%s) self=%p typeObjClass=%s", TypeNameForLog(type), self, ObjClassNameForLog(type));
 
-        if (g_getComponentFuncPtr)
+        void *existing = GetComponentExisting(self, type);
+        AddCompLog("GetComponent(%s) -> existing=%p", TypeNameForLog(type), existing);
+        if (existing)
         {
-            typedef void *(*GetComponentFn)(void *, void *, void *);
-            void *existing = nullptr;
-            if (g_getComponentMethodInfo)
-            {
-                existing = ((GetComponentFn)g_getComponentFuncPtr)(self, type, g_getComponentMethodInfo);
-            }
-            if (!existing)
-            {
-                existing = ((GetComponentFn)g_getComponentFuncPtr)(self, type, nullptr);
-            }
-            AddCompLog("GetComponent(%s) -> existing=%p", TypeNameForLog(type), existing);
-
-            if (existing)
-            {
-                return existing;
-            }
-        }
-        else
-        {
-            AddCompLog("GetComponent: no direct func ptr available");
+            AddCompLog("reuse existing component instead of adding a duplicate");
+            return existing;
         }
 
         if (g_addComponentOrig)
