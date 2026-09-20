@@ -23,7 +23,9 @@ namespace Modding
 
         public static void Install()
         {
-            if (_installed) return;
+            if (_installed)
+                return;
+
             _installed = true;
 
             if (!IsIl2Cpp)
@@ -52,6 +54,8 @@ namespace Modding
             }
 
             NativeBridge.EnsureResourceHooks();
+
+            LogILHookProvider();
         }
 
         private static bool IsIl2Cpp
@@ -63,6 +67,72 @@ namespace Modding
 #else
                 return false;
 #endif
+            }
+        }
+
+        private static void LogILHookProvider()
+        {
+            try
+            {
+                Logger.APILogger.Log(
+                    "MonoMod.RuntimeDetour provider diagnostic");
+
+                Assembly[] assemblies =
+                    AppDomain.CurrentDomain.GetAssemblies();
+
+                bool foundRuntimeDetourAssembly = false;
+                bool foundILHookType = false;
+
+                foreach (Assembly assembly in assemblies)
+                {
+                    string name = assembly.GetName().Name;
+
+                    if (string.Equals(
+                        name,
+                        "MonoMod.RuntimeDetour",
+                        StringComparison.OrdinalIgnoreCase))
+                    {
+                        foundRuntimeDetourAssembly = true;
+
+                        Logger.APILogger.Log(
+                            "MonoMod.RuntimeDetour assembly loaded: " +
+                            assembly.FullName);
+
+                        Type ilHookType =
+                            assembly.GetType(
+                                "MonoMod.RuntimeDetour.ILHook",
+                                false);
+
+                        if (ilHookType != null)
+                        {
+                            foundILHookType = true;
+
+                            Logger.APILogger.Log(
+                                "MonoMod.RuntimeDetour.ILHook provider: " +
+                                ilHookType.Assembly.FullName);
+                        }
+                    }
+                }
+
+                if (!foundRuntimeDetourAssembly)
+                {
+                    Logger.APILogger.Log(
+                        "MonoMod.RuntimeDetour assembly is not loaded.");
+                }
+
+                if (!foundILHookType)
+                {
+                    Logger.APILogger.Log(
+                        "MonoMod.RuntimeDetour.ILHook type was not found.");
+                }
+
+                Logger.APILogger.Log(
+                    "End MonoMod.RuntimeDetour provider diagnostic");
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogError(
+                    "ILHook provider diagnostic failed: " + ex);
             }
         }
 

@@ -196,6 +196,15 @@ namespace Modding
 
 			try
 			{
+				ModHooks.LoadGlobalSettings();
+			}
+			catch (Exception ex)
+			{
+				Logger.APILogger.LogError($"Failed to load global settings: {ex.Message}");
+			}
+
+			try
+			{
 				NativeCompat.Install();
 			}
 			catch (Exception ex)
@@ -246,15 +255,6 @@ namespace Modding
 			if (!Directory.Exists(text2))
 			{
 				Directory.CreateDirectory(text2);
-			}
-
-			try
-			{
-				ModHooks.LoadGlobalSettings();
-			}
-			catch (Exception ex)
-			{
-				Logger.APILogger.LogError($"Failed to load global settings: {ex.Message}");
 			}
 
 			try

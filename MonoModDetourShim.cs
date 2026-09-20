@@ -196,8 +196,8 @@ namespace MonoMod.RuntimeDetour
         private readonly MethodBase _method;
         private readonly MonoMod.Cil.ILContext.Manipulator _manipulator;
 
-        private bool _applied;
         private bool _disposed;
+        private bool _applied;
 
         public ILHook(
             MethodBase method,
@@ -213,11 +213,10 @@ namespace MonoMod.RuntimeDetour
             _manipulator = manipulator;
 
             Logger.APILogger.Log(
-                "ILHook shim created for " +
-                (_method.DeclaringType != null
-                    ? _method.DeclaringType.FullName + "."
-                    : "") +
-                _method.Name);
+                "ILHook shim constructed for " +
+                method.DeclaringType?.FullName +
+                "." +
+                method.Name);
 
             Apply();
         }
@@ -225,11 +224,6 @@ namespace MonoMod.RuntimeDetour
         public MethodBase Method
         {
             get { return _method; }
-        }
-
-        public MonoMod.Cil.ILContext.Manipulator Manipulator
-        {
-            get { return _manipulator; }
         }
 
         public bool IsApplied
@@ -261,19 +255,16 @@ namespace MonoMod.RuntimeDetour
                 _manipulator,
                 out string error))
             {
-                throw new InvalidOperationException(
-                    "Failed to apply IL hook to " +
-                    _method.DeclaringType?.FullName +
-                    "." +
-                    _method.Name +
-                    ": " +
-                    error);
+                Logger.APILogger.LogError(
+                    "ILHook shim failed: " + error);
+
+                throw new InvalidOperationException(error);
             }
 
             _applied = true;
 
             Logger.APILogger.Log(
-                "ILHook shim applied successfully: " +
+                "ILHook shim applied: " +
                 _method.DeclaringType?.FullName +
                 "." +
                 _method.Name);
@@ -288,18 +279,18 @@ namespace MonoMod.RuntimeDetour
                 _method,
                 out string error))
             {
+                _applied = false;
+
                 Logger.APILogger.Log(
                     "ILHook shim removed: " +
                     _method.DeclaringType?.FullName +
                     "." +
                     _method.Name);
-
-                _applied = false;
             }
             else
             {
                 Logger.APILogger.LogWarn(
-                    "Failed to remove IL hook: " + error);
+                    "Failed to remove ILHook: " + error);
             }
         }
 
