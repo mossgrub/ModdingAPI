@@ -764,8 +764,8 @@ namespace Modding
                         originalMethod.DeclaringType.Name +
                         "_ILHook_" +
                         Guid.NewGuid().ToString("N"),
-                        TypeAttributes.Public |
-                        TypeAttributes.Class,
+                        Mono.Cecil.TypeAttributes.Public |
+                        Mono.Cecil.TypeAttributes.Class,
                         objectType);
 
                 module.Types.Add(ghostType);
@@ -777,13 +777,12 @@ namespace Modding
                 MethodDefinition ghostMethod =
                     new MethodDefinition(
                         "Invoke",
-                        MethodAttributes.Public |
-                        MethodAttributes.Static |
-                        MethodAttributes.HideBySig,
+                        Mono.Cecil.MethodAttributes.Public |
+                        Mono.Cecil.MethodAttributes.Static |
+                        Mono.Cecil.MethodAttributes.HideBySig,
                         returnType);
 
-                ghostType.Methods.Add(
-                    ghostMethod);
+                ghostType.Methods.Add(ghostMethod);
 
                 Dictionary<ParameterDefinition, ParameterDefinition>
                     parameterMap =
