@@ -190,4 +190,126 @@ namespace MonoMod.RuntimeDetour
             _disposed = true;
         }
     }
+
+    public class ILHook : IDisposable
+    {
+        private readonly MethodBase _method;
+        private readonly MonoMod.Cil.ILContext.Manipulator _manipulator;
+
+        private bool _applied;
+        private bool _disposed;
+
+        public ILHook(
+            MethodBase method,
+            MonoMod.Cil.ILContext.Manipulator manipulator)
+        {
+            if (method == null)
+                throw new ArgumentNullException(nameof(method));
+
+            if (manipulator == null)
+                throw new ArgumentNullException(nameof(manipulator));
+
+            _method = method;
+            _manipulator = manipulator;
+
+            Logger.APILogger.Log(
+                "ILHook shim created for " +
+                (_method.DeclaringType != null
+                    ? _method.DeclaringType.FullName + "."
+                    : "") +
+                _method.Name);
+
+            Apply();
+        }
+
+        public MethodBase Method
+        {
+            get { return _method; }
+        }
+
+        public MonoMod.Cil.ILContext.Manipulator Manipulator
+        {
+            get { return _manipulator; }
+        }
+
+        public bool IsApplied
+        {
+            get { return _applied; }
+        }
+
+        public bool IsDisposed
+        {
+            get { return _disposed; }
+        }
+
+        public void Apply()
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(ILHook));
+
+            if (_applied)
+                return;
+
+            Logger.APILogger.Log(
+                "ILHook shim applying: " +
+                _method.DeclaringType?.FullName +
+                "." +
+                _method.Name);
+
+            if (!Modding.ILHookBackend.TryApplyILHook(
+                _method,
+                _manipulator,
+                out string error))
+            {
+                throw new InvalidOperationException(
+                    "Failed to apply IL hook to " +
+                    _method.DeclaringType?.FullName +
+                    "." +
+                    _method.Name +
+                    ": " +
+                    error);
+            }
+
+            _applied = true;
+
+            Logger.APILogger.Log(
+                "ILHook shim applied successfully: " +
+                _method.DeclaringType?.FullName +
+                "." +
+                _method.Name);
+        }
+
+        public void Undo()
+        {
+            if (_disposed || !_applied)
+                return;
+
+            if (Modding.ILHookBackend.TryRemoveILHook(
+                _method,
+                out string error))
+            {
+                Logger.APILogger.Log(
+                    "ILHook shim removed: " +
+                    _method.DeclaringType?.FullName +
+                    "." +
+                    _method.Name);
+
+                _applied = false;
+            }
+            else
+            {
+                Logger.APILogger.LogWarn(
+                    "Failed to remove IL hook: " + error);
+            }
+        }
+
+        public void Dispose()
+        {
+            if (_disposed)
+                return;
+
+            Undo();
+            _disposed = true;
+        }
+    }
 }

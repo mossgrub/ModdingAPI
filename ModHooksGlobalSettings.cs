@@ -56,6 +56,11 @@ namespace Modding
         public InGameConsoleSettings ConsoleSettings = new InGameConsoleSettings();
 
         /// <summary>
+        /// Enables the native GameObject component compatibility hooks.
+        /// </summary>
+        public bool EnableComponentCompatibilityHooks = false;
+
+        /// <summary>
         ///     Determines if Debug Console (Which displays Messages from Logger) should be shown.
         /// </summary>
         public bool ShowDebugLogInGame;

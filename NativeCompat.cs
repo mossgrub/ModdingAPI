@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Reflection;
@@ -32,10 +32,25 @@ namespace Modding
             }
 
             NativeBridge.EnsureReady();
+
             InstallHookEndpointRedirect();
+
             NativeBridge.EnsureLocationHook();
-            NativeBridge.EnsureAddComponentHook();
-            NativeBridge.EnsureGameObjectCtorHook();
+
+            if (ModHooks.GlobalSettings.EnableComponentCompatibilityHooks)
+            {
+                Logger.APILogger.Log(
+                    "Component compatibility hooks enabled by ModdingApi.GlobalSettings.json.");
+
+                NativeBridge.EnsureAddComponentHook();
+                NativeBridge.EnsureGameObjectCtorHook();
+            }
+            else
+            {
+                Logger.APILogger.Log(
+                    "Component compatibility hooks disabled by ModdingApi.GlobalSettings.json.");
+            }
+
             NativeBridge.EnsureResourceHooks();
         }
 

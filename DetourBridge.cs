@@ -1105,6 +1105,22 @@ namespace Modding
 
         public static bool TryCreateOrigDetour(MethodInfo targetMethod, Delegate replacement, out Delegate trampolineDelegate, out string error)
         {
+            Logger.APILogger.Log(
+                "TryCreateOrigDetour: " +
+                targetMethod.DeclaringType?.FullName +
+                "." +
+                targetMethod.Name);
+
+            Logger.APILogger.Log(
+                "Replacement method: " +
+                replacement.Method.DeclaringType?.FullName +
+                "." +
+                replacement.Method.Name);
+
+            Logger.APILogger.Log(
+                "Replacement first parameter: " +
+                replacement.Method.GetParameters()[0]
+                    .ParameterType.FullName);
             trampolineDelegate = null;
             error = null;
 
@@ -1140,8 +1156,25 @@ namespace Modding
             }
 
             Type ptrDelegateType = BuildPtrDelegateTypeForMethod(targetMethod, out int[] refIndexes, out _);
+
+            Logger.APILogger.Log(
+                "Required AOT bridge signature: " +
+                (ptrDelegateType != null
+                ? ptrDelegateType.FullName
+                : "<null>"));
+
             if (ptrDelegateType != null && TryGetFreeBridge(ptrDelegateType, out ConcreteBridgeInfo ptrCbi))
             {
+                Logger.APILogger.Log(
+                    "AOT bridge found: " +
+                    ptrCbi.Bridge?.Name +
+                    " | Slot=" +
+                    ptrCbi.Slot?.Name +
+                    " | Delegate=" +
+                    ptrCbi.DelegateType?.FullName +
+                    " | Orig=" +
+                    ptrCbi.OrigType?.FullName);
+
                 Delegate origDelegate;
                 if (!TryInstallConcreteDetour(targetMethod, ptrCbi.Slot, ptrDelegateType, ptrCbi.OrigType, ptrCbi.Bridge,
                     replacement, refIndexes, out origDelegate, out error))
