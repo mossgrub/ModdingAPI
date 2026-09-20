@@ -98,6 +98,10 @@ namespace
     typedef const char *(*Il2CppClassGetNameFn)(void *klass);
     typedef uintptr_t (*Il2CppArrayLengthFn)(void *array);
 
+    typedef void *(*Il2CppResolveIcallFn)(const char *name);
+
+    Il2CppResolveIcallFn g_resolveIcall = nullptr;
+
     Il2CppTypeFromReflectionFn g_typeFromReflection = nullptr;
     Il2CppClassFromTypeFn g_classFromType = nullptr;
     Il2CppClassGetNameFn g_classGetName = nullptr;
@@ -629,11 +633,33 @@ extern "C"
         }
         LOGI("mod2_init: dobby resolved (hook=%p)", (void *)g_dobbyHook);
 
-        g_typeFromReflection = (Il2CppTypeFromReflectionFn)dlsym(h, "il2cpp_type_from_reflection");
-        g_classFromType = (Il2CppClassFromTypeFn)dlsym(h, "il2cpp_class_from_type");
-        g_classGetName = (Il2CppClassGetNameFn)dlsym(h, "il2cpp_class_get_name");
-        g_arrayLength = (Il2CppArrayLengthFn)dlsym(h, "il2cpp_array_length");
-        LOGI("mod2_init: type_from_reflection=%p class_from_type=%p class_get_name=%p", (void *)g_typeFromReflection, (void *)g_classFromType, (void *)g_classGetName);
+        g_typeFromReflection = (Il2CppTypeFromReflectionFn)dlsym(
+            h,
+            "il2cpp_type_from_reflection");
+
+        g_classFromType = (Il2CppClassFromTypeFn)dlsym(
+            h,
+            "il2cpp_class_from_type");
+
+        g_classGetName = (Il2CppClassGetNameFn)dlsym(
+            h,
+            "il2cpp_class_get_name");
+
+        g_arrayLength = (Il2CppArrayLengthFn)dlsym(
+            h,
+            "il2cpp_array_length");
+
+        g_resolveIcall = (Il2CppResolveIcallFn)dlsym(
+            h,
+            "il2cpp_resolve_icall");
+
+        LOGI(
+            "mod2_init: type_from_reflection=%p class_from_type=%p "
+            "class_get_name=%p resolve_icall=%p",
+            (void *)g_typeFromReflection,
+            (void *)g_classFromType,
+            (void *)g_classGetName,
+            (void *)g_resolveIcall);
 
         g_methodParamCount = (Il2CppMethodGetParamCountFn)dlsym(h, "il2cpp_method_get_param_count");
         g_methodParam = (Il2CppMethodGetParamFn)dlsym(h, "il2cpp_method_get_param");
@@ -1537,8 +1563,11 @@ extern "C"
 
     static void *g_addComponentTarget = nullptr;
     static void *g_addComponentOrig = nullptr;
+
     static void *g_getComponentMethodInfo = nullptr;
     static void *g_getComponentFuncPtr = nullptr;
+    static void *g_getComponentIcall = nullptr;
+
     static bool g_addComponentInstalled = false;
     static int g_addCompLogs = 0;
 
@@ -1676,156 +1705,48 @@ extern "C"
 
     static void *ResolveInternalAddComponentWithType()
     {
-        if (!g_domainGet ||
-            !g_domainAsm ||
-            !g_asmGetImage ||
-            !g_methodGetName ||
-            !g_methodParamCount)
-        {
-            return nullptr;
-        }
-
-        typedef void *(*ClassFromNameFn)(
-            void *image,
-            const char *namespaze,
-            const char *name);
-
-        typedef void *(*ClassGetMethodsFn)(
-            void *klass,
-            void **iter);
-
-        static ClassFromNameFn classFromName = nullptr;
-        static ClassGetMethodsFn classGetMethods = nullptr;
-        static bool searched = false;
-
-        if (!searched)
-        {
-            searched = true;
-
-            void *h = dlopen(
-                "libil2cpp.so",
-                RTLD_NOW | RTLD_GLOBAL);
-
-            if (h)
-            {
-                classFromName =
-                    (ClassFromNameFn)dlsym(
-                        h,
-                        "il2cpp_class_from_name");
-
-                classGetMethods =
-                    (ClassGetMethodsFn)dlsym(
-                        h,
-                        "il2cpp_class_get_methods");
-            }
-        }
-
-        if (!classFromName || !classGetMethods)
+        if (!g_resolveIcall)
         {
             LOGE(
-                "Internal AddComponent resolver: missing il2cpp class symbols "
-                "classFromName=%p classGetMethods=%p",
-                (void *)classFromName,
-                (void *)classGetMethods);
-
+                "ResolveInternalAddComponentWithType: "
+                "il2cpp_resolve_icall is unavailable.");
             return nullptr;
         }
 
-        void *domain = g_domainGet();
+        static const char *kName =
+            "UnityEngine.GameObject::Internal_AddComponentWithType(System.Type)";
 
-        if (!domain)
-            return nullptr;
+        void *target = g_resolveIcall(kName);
 
-        size_t assemblyCount = 0;
+        LOGI(
+            "Resolved ICall %s -> %p",
+            kName,
+            target);
 
-        void **assemblies =
-            g_domainAsm(
-                domain,
-                &assemblyCount);
+        return target;
+    }
 
-        if (!assemblies || assemblyCount == 0)
-            return nullptr;
-
-        for (size_t i = 0; i < assemblyCount; ++i)
+    static void *ResolveGameObjectGetComponentIcall()
+    {
+        if (!g_resolveIcall)
         {
-            void *assembly = assemblies[i];
-
-            if (!assembly)
-                continue;
-
-            void *image =
-                g_asmGetImage(assembly);
-
-            if (!image)
-                continue;
-
-            void *gameObjectClass =
-                classFromName(
-                    image,
-                    "UnityEngine",
-                    "GameObject");
-
-            if (!gameObjectClass)
-                continue;
-
-            void *iter = nullptr;
-
-            while (true)
-            {
-                void *method =
-                    classGetMethods(
-                        gameObjectClass,
-                        &iter);
-
-                if (!method)
-                    break;
-
-                const char *name =
-                    g_methodGetName(method);
-
-                if (!name)
-                    continue;
-
-                if (strcmp(
-                        name,
-                        "Internal_AddComponentWithType") != 0)
-                {
-                    continue;
-                }
-
-                uint32_t parameterCount =
-                    g_methodParamCount(method);
-
-                if (parameterCount != 1)
-                    continue;
-
-                uintptr_t methodPointer = 0;
-
-                memcpy(
-                    &methodPointer,
-                    method,
-                    sizeof(uintptr_t));
-
-                if (!methodPointer ||
-                    methodPointer < 0x1000)
-                {
-                    continue;
-                }
-
-                LOGI(
-                    "Resolved GameObject.Internal_AddComponentWithType "
-                    "methodInfo=%p native=%p",
-                    method,
-                    (void *)methodPointer);
-
-                return (void *)methodPointer;
-            }
+            LOGE(
+                "ResolveGameObjectGetComponentIcall: "
+                "il2cpp_resolve_icall is unavailable.");
+            return nullptr;
         }
 
-        LOGE(
-            "Could not resolve GameObject.Internal_AddComponentWithType");
+        static const char *kName =
+            "UnityEngine.GameObject::GetComponent(System.Type)";
 
-        return nullptr;
+        void *target = g_resolveIcall(kName);
+
+        LOGI(
+            "Resolved ICall %s -> %p",
+            kName,
+            target);
+
+        return target;
     }
 
     struct Mod2CtorComponentEntry
@@ -1921,12 +1842,30 @@ extern "C"
 
     static void *GetComponentExisting(void *self, void *type)
     {
-        if (!self || !type || !g_getComponentMethodInfo)
+        if (!self || !type)
             return nullptr;
 
-        // Prefer the native GameObject.GetComponent(Type) call.
+        // Preferred path:
+        // direct native Unity Internal Call.
+        if (g_getComponentIcall)
+        {
+            typedef void *(*GetComponentIcallFn)(
+                void *,
+                void *);
 
-        if (g_getComponentFuncPtr)
+            void *result =
+                ((GetComponentIcallFn)g_getComponentIcall)(
+                    self,
+                    type);
+
+            if (result)
+                return result;
+        }
+
+        // Fallback:
+        // managed IL2CPP wrapper with MethodInfo.
+        if (g_getComponentFuncPtr &&
+            g_getComponentMethodInfo)
         {
             typedef void *(*GetComponentFn)(
                 void *,
@@ -1943,9 +1882,10 @@ extern "C"
                 return result;
         }
 
-        // Fallback through il2cpp_runtime_invoke.
-
-        if (g_invoke)
+        // Last fallback:
+        // runtime_invoke through MethodInfo.
+        if (g_invoke &&
+            g_getComponentMethodInfo)
         {
             void *args[1] = {type};
             void *exception = nullptr;
@@ -1984,8 +1924,7 @@ extern "C"
 
     static void *AddComponentHook(
         void *self,
-        void *type,
-        void *methodInfo)
+        void *type)
     {
         if (!self || !type)
             return nullptr;
@@ -1997,14 +1936,13 @@ extern "C"
             GetComponentTypeClass(type);
 
         AddCompLog(
-            "AddComponent(%s) self=%p type=%p class=%p",
+            "Internal_AddComponentWithType(%s) self=%p type=%p class=%p",
             typeName,
             self,
             type,
             typeClass);
 
         // First check the constructor-local cache.
-
         if (g_ctorFrameDepth > 0 && typeClass)
         {
             void *cached =
@@ -2024,7 +1962,6 @@ extern "C"
         }
 
         // Ask Unity whether the component already exists.
-
         void *existing =
             GetComponentExisting(
                 self,
@@ -2048,21 +1985,19 @@ extern "C"
             return existing;
         }
 
-        // No existing component: perform the real native operation.
-
+        // No existing component:
+        // perform the real native operation.
         if (!g_addComponentOrig)
             return nullptr;
 
         typedef void *(*AddComponentFn)(
-            void *,
             void *,
             void *);
 
         void *result =
             ((AddComponentFn)g_addComponentOrig)(
                 self,
-                type,
-                methodInfo);
+                type);
 
         AddCompLog(
             "CREATED %s -> %p",
@@ -2080,7 +2015,6 @@ extern "C"
         }
 
         // Last recovery attempt.
-
         void *recovered =
             GetComponentExisting(
                 self,
@@ -2119,10 +2053,11 @@ extern "C"
         if (g_addComponentInstalled)
             return 1;
 
-        if (!getComponentFuncPtr ||
-            !getComponentMethodInfo ||
-            !g_ready)
+        if (!g_ready || !g_resolveIcall)
         {
+            LOGE(
+                "Component hook cannot install: "
+                "runtime or il2cpp_resolve_icall unavailable.");
             return 0;
         }
 
@@ -2136,15 +2071,16 @@ extern "C"
             return 0;
         }
 
+        // Keep the managed GetComponent information as a fallback.
         g_getComponentMethodInfo =
             getComponentMethodInfo;
 
         g_getComponentFuncPtr =
             getComponentFuncPtr;
 
-        // Note: Do not hook the managed AddComponent(Type) wrapper.
-        // Hook the actual native method used by that wrapper:
-        // Internal_AddComponentWithType(Type)
+        // Resolve the real native Unity Internal Calls.
+        g_getComponentIcall =
+            ResolveGameObjectGetComponentIcall();
 
         void *internalTarget =
             ResolveInternalAddComponentWithType();
@@ -2154,6 +2090,15 @@ extern "C"
             LOGE(
                 "Could not install Component hook: "
                 "Internal_AddComponentWithType target not found.");
+
+            return 0;
+        }
+
+        if (!g_getComponentIcall)
+        {
+            LOGE(
+                "Could not install Component hook: "
+                "GameObject.GetComponent(System.Type) ICall not found.");
 
             return 0;
         }
@@ -2183,9 +2128,10 @@ extern "C"
             LOGI(
                 "GameObject.Internal_AddComponentWithType "
                 "native compat hook installed "
-                "(target=%p orig=%p publicAdd=%p).",
+                "(target=%p orig=%p getComponent=%p publicAdd=%p).",
                 g_addComponentTarget,
                 g_addComponentOrig,
+                g_getComponentIcall,
                 addComponentMethodPtr);
         }
 
@@ -2294,9 +2240,10 @@ extern "C"
             }
         }
 
-        // Unity's GameObject(string, Type[]) constructor itself creates
-        // the GameObject and then invokes AddComponent for each requested
-        // Type, so the AddComponent hook above will observe that process.
+        // Unity's GameObject(string, Type[]) constructor requests its
+        // components through Unity's AddComponent/Internal Call path.
+        // The native Internal_AddComponentWithType hook should therefore
+        // observe component creation performed by this constructor.
 
         if (g_gameObjectCtorOrig)
         {
