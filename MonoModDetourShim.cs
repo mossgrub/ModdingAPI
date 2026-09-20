@@ -200,8 +200,8 @@ namespace MonoMod.RuntimeDetour
         private bool _applied;
 
         public ILHook(
-            MethodBase method,
-            MonoMod.Cil.ILContext.Manipulator manipulator)
+    MethodBase method,
+    MonoMod.Cil.ILContext.Manipulator manipulator)
         {
             if (method == null)
                 throw new ArgumentNullException(nameof(method));
@@ -211,6 +211,14 @@ namespace MonoMod.RuntimeDetour
 
             _method = method;
             _manipulator = manipulator;
+
+            Logger.APILogger.Log(
+                "ILHook provider: " +
+                typeof(ILHook).Assembly.FullName);
+
+            Logger.APILogger.Log(
+                "ILHook provider location: " +
+                (typeof(ILHook).Assembly.Location ?? "<null>"));
 
             Logger.APILogger.Log(
                 "ILHook shim constructed for " +

@@ -193,39 +193,75 @@ namespace Modding
 
         public static IntPtr GetNativeMethodAddress(MethodInfo method)
         {
-            if (method == null) return IntPtr.Zero;
+            if (method == null)
+                return IntPtr.Zero;
+
             try
             {
-                IntPtr fn = method.MethodHandle.GetFunctionPointer();
+                IntPtr ptr =
+                    Il2CppResolver.TryGetMethodPointer(method);
+
+                if (ptr != IntPtr.Zero)
+                {
+                    Logger.APILogger.LogDebug(
+                        "IL2CPP resolver returned native address 0x" +
+                        ptr.ToInt64().ToString("X") +
+                        " for " +
+                        method.DeclaringType?.Name +
+                        "." +
+                        method.Name);
+
+                    return ptr;
+                }
+
+                Logger.APILogger.LogDebug(
+                    "IL2CPP resolver could not resolve native address for " +
+                    method.DeclaringType?.Name +
+                    "." +
+                    method.Name);
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogDebug(
+                    "IL2CPP method resolver failed for " +
+                    method.Name +
+                    ": " +
+                    ex.Message);
+            }
+
+            try
+            {
+                IntPtr fn =
+                    method.MethodHandle.GetFunctionPointer();
+
                 if (fn != IntPtr.Zero)
                 {
+                    Logger.APILogger.LogDebug(
+                        "Using MethodHandle fallback for " +
+                        method.DeclaringType?.Name +
+                        "." +
+                        method.Name +
+                        ": 0x" +
+                        fn.ToInt64().ToString("X"));
+
                     return fn;
                 }
             }
             catch (Exception ex)
             {
-                Logger.APILogger.LogDebug("GetFunctionPointer threw for " + method.Name + ": " + ex.Message);
-            }
-
-            try
-            {
-                IntPtr ptr = Il2CppResolver.TryGetMethodPointer(method);
-                if (ptr != IntPtr.Zero)
-                {
-                    Logger.APILogger.LogDebug(
-                        "IL2CPP resolver returned native address 0x" + ptr.ToInt64().ToString("X") +
-                        " for " + method.DeclaringType?.Name + "." + method.Name);
-                    return ptr;
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.APILogger.LogDebug("IL2CPP method resolver failed for " + method.Name + ": " + ex.Message);
+                Logger.APILogger.LogDebug(
+                    "GetFunctionPointer threw for " +
+                    method.Name +
+                    ": " +
+                    ex.Message);
             }
 
             Logger.APILogger.LogDebug(
-                "Could not obtain a native address for " + method.DeclaringType?.Name + "." + method.Name +
-                " (GetFunctionPointer is 0).");
+                "Could not obtain native address for " +
+                method.DeclaringType?.Name +
+                "." +
+                method.Name);
+
             return IntPtr.Zero;
         }
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -845,112 +881,372 @@ namespace Modding
             catch { return string.Empty; }
         }
 
-        public static bool TryInstallConcreteDetour(MethodInfo target, Type slotType, Type delegateType, Type origType,
-            MethodInfo concreteBridge, Delegate replacement, int[] refIndexes, out Delegate orig, out string error)
+        public static bool TryInstallConcreteDetour(
+    MethodInfo target,
+    Type slotType,
+    Type delegateType,
+    Type origType,
+    MethodInfo concreteBridge,
+    Delegate replacement,
+    int[] refIndexes,
+    out Delegate orig,
+    out string error)
         {
             orig = null;
             error = null;
 
-            if (Installed.TryGetValue(target, out InstalledHook extHook) &&
-                extHook.Slot != slotType &&
-                BridgeStates.TryGetValue(extHook.Slot, out BridgeState extSt) &&
-                extSt.Orig != null && extSt.Trampoline != IntPtr.Zero)
+            if (target == null)
             {
-                lock (extSt.Handlers)
+                error = "target is null.";
+                return false;
+            }
+
+            if (slotType == null)
+            {
+                error = "slotType is null.";
+                return false;
+            }
+
+            if (delegateType == null)
+            {
+                error = "delegateType is null.";
+                return false;
+            }
+
+            if (concreteBridge == null)
+            {
+                error = "concreteBridge is null.";
+                return false;
+            }
+
+            if (!_dobbyAvailable)
+            {
+                error = "Dobby not available.";
+                return false;
+            }
+
+            // If this target already has a concrete detour installed,
+            // reuse the existing trampoline and replace/add the handler.
+
+            if (Installed.TryGetValue(
+                target,
+                out InstalledHook existingHook) &&
+                existingHook.Slot != slotType &&
+                BridgeStates.TryGetValue(
+                    existingHook.Slot,
+                    out BridgeState existingState) &&
+                existingState.Orig != null &&
+                existingState.Trampoline != IntPtr.Zero)
+            {
+                lock (existingState.Handlers)
                 {
-                    extSt.Handlers.Clear();
-                    if (replacement != null) extSt.Handlers.Add(replacement);
+                    existingState.Handlers.Clear();
+
+                    if (replacement != null)
+                    {
+                        existingState.Handlers.Add(replacement);
+                    }
                 }
-                orig = extSt.Orig;
+
+                orig = existingState.Orig;
                 return true;
             }
 
-            BridgeState st0;
-            if (!BridgeStates.TryGetValue(slotType, out st0) || st0.Trampoline == IntPtr.Zero)
-            {
-                st0 = new BridgeState { Handlers = new List<Delegate> { replacement }, RefIndexes = refIndexes };
-                BridgeStates[slotType] = st0;
-            }
-            else
-            {
-                lock (st0.Handlers) { st0.Handlers.Clear(); st0.Handlers.Add(replacement); }
-            }
+            // The slot was already reserved by TryGetFreeBridge().
+            // Do not install anything until both the native method and
+            // the IL2CPP MethodInfo have been validated.
 
-            IntPtr targetAddr = GetNativeMethodAddress(target);
-            if (targetAddr == IntPtr.Zero) { error = "cannot get target address."; return false; }
+            IntPtr targetAddr = IntPtr.Zero;
 
-            Delegate bridgeDel;
-            IntPtr bridgeAddr;
             try
             {
-                bridgeDel = Delegate.CreateDelegate(delegateType, null, concreteBridge);
-                bridgeAddr = Marshal.GetFunctionPointerForDelegate(bridgeDel);
+                targetAddr =
+                    Il2CppResolver.TryGetMethodPointer(target);
+
+                Logger.APILogger.Log(
+                    "IL2CPP AOT target resolution: " +
+                    target.DeclaringType?.FullName +
+                    "." +
+                    target.Name +
+                    " -> 0x" +
+                    targetAddr.ToInt64().ToString("X"));
             }
             catch (Exception ex)
             {
-                error = "bridge delegate/pointer: " + ex.Message;
+                Logger.APILogger.LogError(
+                    "Failed to resolve IL2CPP AOT address for " +
+                    target.Name +
+                    ": " +
+                    ex);
+
+                targetAddr = IntPtr.Zero;
+            }
+
+            if (targetAddr == IntPtr.Zero)
+            {
+                BridgeStates.TryRemove(
+                    slotType,
+                    out _);
+
+                error =
+                    "IL2CPP resolver returned no native address for " +
+                    target.DeclaringType?.FullName +
+                    "." +
+                    target.Name +
+                    ". Dobby hook was not installed.";
+
+                Logger.APILogger.LogWarn(error);
+
                 return false;
             }
-            if (bridgeAddr == IntPtr.Zero) { error = "bridge delegate has no native function pointer."; return false; }
-            if (BridgeStates.TryGetValue(slotType, out BridgeState bs)) bs.Bridge = bridgeDel;
+
+            // Resolve MethodInfo before DobbyHookNative.
+            // This is intentional: a valid native address without a valid
+            // Il2Cpp MethodInfo is not sufficient for this bridge architecture.
+
+            IntPtr nativeMethod = IntPtr.Zero;
+
+            try
+            {
+                nativeMethod =
+                    Il2CppResolver.TryGetMethodInfoPointer(
+                        target);
+
+                Logger.APILogger.Log(
+                    "IL2CPP MethodInfo resolution: " +
+                    target.DeclaringType?.FullName +
+                    "." +
+                    target.Name +
+                    " -> 0x" +
+                    nativeMethod.ToInt64().ToString("X"));
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogError(
+                    "Failed to resolve IL2CPP MethodInfo for " +
+                    target.Name +
+                    ": " +
+                    ex);
+
+                nativeMethod = IntPtr.Zero;
+            }
+
+            if (nativeMethod == IntPtr.Zero)
+            {
+                BridgeStates.TryRemove(
+                    slotType,
+                    out _);
+
+                error =
+                    "No IL2CPP MethodInfo available for " +
+                    target.DeclaringType?.FullName +
+                    "." +
+                    target.Name +
+                    ". Dobby hook was not installed.";
+
+                Logger.APILogger.LogWarn(error);
+
+                return false;
+            }
+
+            Delegate bridgeDel;
+            IntPtr bridgeAddr;
+
+            try
+            {
+                bridgeDel =
+                    Delegate.CreateDelegate(
+                        delegateType,
+                        null,
+                        concreteBridge);
+
+                bridgeAddr =
+                    Marshal.GetFunctionPointerForDelegate(
+                        bridgeDel);
+            }
+            catch (Exception ex)
+            {
+                BridgeStates.TryRemove(
+                    slotType,
+                    out _);
+
+                error =
+                    "Could not create bridge delegate/pointer: " +
+                    ex.Message;
+
+                return false;
+            }
+
+            if (bridgeAddr == IntPtr.Zero)
+            {
+                BridgeStates.TryRemove(
+                    slotType,
+                    out _);
+
+                error =
+                    "Bridge delegate returned a null native pointer.";
+
+                return false;
+            }
 
             if (targetAddr == bridgeAddr)
             {
-                BridgeStates.TryRemove(slotType, out _);
-                error = "target and bridge share the same native address.";
+                BridgeStates.TryRemove(
+                    slotType,
+                    out _);
+
+                error =
+                    "Target and bridge share the same native address.";
+
                 return false;
             }
 
+            BridgeState state =
+                new BridgeState
+                {
+                    Handlers =
+                        new List<Delegate>
+                        {
+                    replacement
+                        },
+
+                    RefIndexes = refIndexes,
+
+                    Target = target,
+
+                    NativeMethod = nativeMethod,
+
+                    InstanceCall = !target.IsStatic,
+
+                    OrigParamType =
+                        replacement?.Method
+                            ?.GetParameters()
+                            .Length > 0
+                            ? replacement.Method
+                                .GetParameters()[0]
+                                .ParameterType
+                            : delegateType
+                };
+
+            state.Bridge = bridgeDel;
+
+            BridgeStates[slotType] = state;
+
             IntPtr trampPtr = IntPtr.Zero;
-            try { DobbyHookNative(targetAddr, bridgeAddr, out trampPtr); }
-            catch (Exception ex) { error = "DobbyHook: " + ex.Message; return false; }
+
+            try
+            {
+                int result =
+                    DobbyHookNative(
+                        targetAddr,
+                        bridgeAddr,
+                        out trampPtr);
+
+                Logger.APILogger.Log(
+                    "DobbyHook result=" +
+                    result +
+                    " target=0x" +
+                    targetAddr.ToInt64().ToString("X") +
+                    " bridge=0x" +
+                    bridgeAddr.ToInt64().ToString("X") +
+                    " trampoline=0x" +
+                    trampPtr.ToInt64().ToString("X"));
+            }
+            catch (Exception ex)
+            {
+                BridgeStates.TryRemove(
+                    slotType,
+                    out _);
+
+                error =
+                    "DobbyHook failed: " +
+                    ex.Message;
+
+                Logger.APILogger.LogError(error);
+
+                return false;
+            }
+
             if (trampPtr == IntPtr.Zero)
             {
                 TryUnhook(targetAddr);
-                error = "DobbyHook returned null trampoline.";
+
+                BridgeStates.TryRemove(
+                    slotType,
+                    out _);
+
+                error =
+                    "DobbyHook returned a null trampoline.";
+
+                Logger.APILogger.LogError(error);
+
                 return false;
             }
 
-            Type origParamType = replacement?.Method?.GetParameters().Length > 0
-                ? replacement.Method.GetParameters()[0].ParameterType
-                : delegateType;
+            state.Trampoline =
+                trampPtr;
 
-            IntPtr nativeMethod = Il2CppResolver.TryGetMethodInfoPointer(target);
-            if (nativeMethod == IntPtr.Zero)
-            {
-                TryUnhook(targetAddr);
-                error = "orig native thunk: no il2cpp MethodInfo available for " + target.Name + ".";
-                return false;
-            }
+            // Build the managed orig delegate from the native trampoline.
 
-            var adapter = new OrigAdapter
-            {
-                Target = target,
-                NativeMethod = nativeMethod,
-                Trampoline = trampPtr,
-                InstanceCall = !target.IsStatic
-            };
-            orig = CreateManagedOrigDelegate(origParamType, target, adapter);
+            Type origParamType =
+                replacement?.Method?.GetParameters().Length > 0
+                    ? replacement.Method
+                        .GetParameters()[0]
+                        .ParameterType
+                    : delegateType;
+
+            var adapter =
+                new OrigAdapter
+                {
+                    Target = target,
+                    NativeMethod = nativeMethod,
+                    Trampoline = trampPtr,
+                    InstanceCall = !target.IsStatic
+                };
+
+            orig =
+                CreateManagedOrigDelegate(
+                    origParamType,
+                    target,
+                    adapter);
+
             if (orig == null)
             {
                 TryUnhook(targetAddr);
-                error = "orig delegate: could not adapt to " + (origParamType?.Name ?? "?") +
-                        " (managed forwarding unsupported).";
+
+                BridgeStates.TryRemove(
+                    slotType,
+                    out _);
+
+                error =
+                    "Could not create managed orig delegate for " +
+                    (origParamType?.Name ?? "?") +
+                    ".";
+
+                Logger.APILogger.LogError(error);
+
                 return false;
             }
 
-            if (BridgeStates.TryGetValue(slotType, out BridgeState s2))
-            {
-                s2.Orig = orig;
-                s2.Bridge = bridgeDel;
-                s2.Target = target;
-                s2.NativeMethod = nativeMethod;
-                s2.Trampoline = trampPtr;
-                s2.InstanceCall = !target.IsStatic;
-                s2.OrigParamType = origParamType;
-            }
-            Logger.APILogger.LogDebug("Concrete detour installed for " + target.Name +
-                " (bridge 0x" + bridgeAddr.ToInt64().ToString("X") + ").");
+            state.Orig = orig;
+            state.Bridge = bridgeDel;
+            state.Target = target;
+            state.NativeMethod = nativeMethod;
+            state.Trampoline = trampPtr;
+            state.InstanceCall = !target.IsStatic;
+            state.OrigParamType = origParamType;
+
+            Logger.APILogger.Log(
+                "Concrete detour installed for " +
+                target.Name +
+                " (bridge 0x" +
+                bridgeAddr.ToInt64().ToString("X") +
+                ", target 0x" +
+                targetAddr.ToInt64().ToString("X") +
+                ", MethodInfo 0x" +
+                nativeMethod.ToInt64().ToString("X") +
+                ").");
+
             return true;
         }
 
