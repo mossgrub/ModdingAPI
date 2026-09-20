@@ -1592,43 +1592,240 @@ extern "C"
         return j > 0;
     }
 
+    static void *ResolveClassFromSystemType(void *typeObj)
+    {
+        if (!typeObj)
+            return nullptr;
+
+        typedef void *(*ClassFromSystemTypeFn)(void *reflectionType);
+
+        static ClassFromSystemTypeFn fn = nullptr;
+        static bool searched = false;
+
+        if (!searched)
+        {
+            searched = true;
+
+            void *h = dlopen("libil2cpp.so", RTLD_NOW | RTLD_GLOBAL);
+
+            if (h)
+            {
+                fn = (ClassFromSystemTypeFn)dlsym(
+                    h,
+                    "il2cpp_class_from_system_type");
+            }
+        }
+
+        if (!fn)
+            return nullptr;
+
+        return fn(typeObj);
+    }
+
     static const char *TypeNameForLog(void *typeObj)
     {
         if (!typeObj)
             return "null";
+
+        // First try the real Il2CppClass behind System.Type.
+
+        void *klass = ResolveClassFromSystemType(typeObj);
+
+        if (klass && g_classGetName)
+        {
+            const char *name = g_classGetName(klass);
+
+            if (name && *name)
+                return name;
+        }
+
+        // Fallback to the managed System.Type.FullName resolver.
+
         const char *oc = ObjClassNameForLog(typeObj);
+
         if (!oc)
             return "?";
 
-        if (strcmp(oc, "Type") != 0 && strcmp(oc, "RuntimeType") != 0 && strcmp(oc, "MonoType") != 0)
-            return oc;
-
         if (g_typeFullNameMethodInfo && g_invoke)
         {
-            static char nameBufs[4][256];
+            static char nameBufs[8][256];
             static int nameSlot = 0;
-            void *exc = nullptr;
-            void *strObj = g_invoke(g_typeFullNameMethodInfo, typeObj, nullptr, &exc);
-            nameSlot = (nameSlot + 1) & 3;
-            if (!exc && CopyIl2CppStringAscii(strObj, nameBufs[nameSlot], sizeof(nameBufs[0])))
-                return nameBufs[nameSlot];
-        }
 
-        if (g_typeFromReflection && g_classFromType && g_classGetName)
-        {
-            void *t = g_typeFromReflection(typeObj);
-            if (t)
+            void *exc = nullptr;
+
+            void *strObj = g_invoke(
+                g_typeFullNameMethodInfo,
+                typeObj,
+                nullptr,
+                &exc);
+
+            nameSlot = (nameSlot + 1) & 7;
+
+            if (!exc &&
+                CopyIl2CppStringAscii(
+                    strObj,
+                    nameBufs[nameSlot],
+                    sizeof(nameBufs[0])))
             {
-                void *k = g_classFromType(t);
-                if (k)
-                {
-                    const char *n = g_classGetName(k);
-                    if (n && *n)
-                        return n;
-                }
+                return nameBufs[nameSlot];
             }
         }
+
         return oc;
+    }
+
+    static void *ResolveInternalAddComponentWithType()
+    {
+        if (!g_domainGet ||
+            !g_domainAsm ||
+            !g_asmGetImage ||
+            !g_methodGetName ||
+            !g_methodParamCount)
+        {
+            return nullptr;
+        }
+
+        typedef void *(*ClassFromNameFn)(
+            void *image,
+            const char *namespaze,
+            const char *name);
+
+        typedef void *(*ClassGetMethodsFn)(
+            void *klass,
+            void **iter);
+
+        static ClassFromNameFn classFromName = nullptr;
+        static ClassGetMethodsFn classGetMethods = nullptr;
+        static bool searched = false;
+
+        if (!searched)
+        {
+            searched = true;
+
+            void *h = dlopen(
+                "libil2cpp.so",
+                RTLD_NOW | RTLD_GLOBAL);
+
+            if (h)
+            {
+                classFromName =
+                    (ClassFromNameFn)dlsym(
+                        h,
+                        "il2cpp_class_from_name");
+
+                classGetMethods =
+                    (ClassGetMethodsFn)dlsym(
+                        h,
+                        "il2cpp_class_get_methods");
+            }
+        }
+
+        if (!classFromName || !classGetMethods)
+        {
+            LOGE(
+                "Internal AddComponent resolver: missing il2cpp class symbols "
+                "classFromName=%p classGetMethods=%p",
+                (void *)classFromName,
+                (void *)classGetMethods);
+
+            return nullptr;
+        }
+
+        void *domain = g_domainGet();
+
+        if (!domain)
+            return nullptr;
+
+        size_t assemblyCount = 0;
+
+        void **assemblies =
+            g_domainAsm(
+                domain,
+                &assemblyCount);
+
+        if (!assemblies || assemblyCount == 0)
+            return nullptr;
+
+        for (size_t i = 0; i < assemblyCount; ++i)
+        {
+            void *assembly = assemblies[i];
+
+            if (!assembly)
+                continue;
+
+            void *image =
+                g_asmGetImage(assembly);
+
+            if (!image)
+                continue;
+
+            void *gameObjectClass =
+                classFromName(
+                    image,
+                    "UnityEngine",
+                    "GameObject");
+
+            if (!gameObjectClass)
+                continue;
+
+            void *iter = nullptr;
+
+            while (true)
+            {
+                void *method =
+                    classGetMethods(
+                        gameObjectClass,
+                        &iter);
+
+                if (!method)
+                    break;
+
+                const char *name =
+                    g_methodGetName(method);
+
+                if (!name)
+                    continue;
+
+                if (strcmp(
+                        name,
+                        "Internal_AddComponentWithType") != 0)
+                {
+                    continue;
+                }
+
+                uint32_t parameterCount =
+                    g_methodParamCount(method);
+
+                if (parameterCount != 1)
+                    continue;
+
+                uintptr_t methodPointer = 0;
+
+                memcpy(
+                    &methodPointer,
+                    method,
+                    sizeof(uintptr_t));
+
+                if (!methodPointer ||
+                    methodPointer < 0x1000)
+                {
+                    continue;
+                }
+
+                LOGI(
+                    "Resolved GameObject.Internal_AddComponentWithType "
+                    "methodInfo=%p native=%p",
+                    method,
+                    (void *)methodPointer);
+
+                return (void *)methodPointer;
+            }
+        }
+
+        LOGE(
+            "Could not resolve GameObject.Internal_AddComponentWithType");
+
+        return nullptr;
     }
 
     struct Mod2CtorComponentEntry
@@ -1649,26 +1846,17 @@ extern "C"
 
     static thread_local Mod2CtorFrame g_ctorFrames[8];
     static thread_local int g_ctorFrameDepth = 0;
-
     static void *GetComponentTypeClass(void *type)
     {
         if (!type)
             return nullptr;
 
-        if (g_typeFromReflection && g_classFromType)
-        {
-            void *il2cppType = g_typeFromReflection(type);
+        void *klass = ResolveClassFromSystemType(type);
 
-            if (il2cppType)
-            {
-                void *klass = g_classFromType(il2cppType);
+        if (klass)
+            return klass;
 
-                if (klass)
-                    return klass;
-            }
-        }
-
-        return type;
+        return nullptr;
     }
 
     static void *FindCtorCachedComponent(void *self, void *klass)
@@ -1736,27 +1924,48 @@ extern "C"
         if (!self || !type || !g_getComponentMethodInfo)
             return nullptr;
 
-        void *managedResult = nullptr;
-        void *exception = nullptr;
+        // Prefer the native GameObject.GetComponent(Type) call.
+
+        if (g_getComponentFuncPtr)
+        {
+            typedef void *(*GetComponentFn)(
+                void *,
+                void *,
+                void *);
+
+            void *result =
+                ((GetComponentFn)g_getComponentFuncPtr)(
+                    self,
+                    type,
+                    g_getComponentMethodInfo);
+
+            if (result)
+                return result;
+        }
+
+        // Fallback through il2cpp_runtime_invoke.
 
         if (g_invoke)
         {
             void *args[1] = {type};
+            void *exception = nullptr;
 
-            managedResult = g_invoke(
-                g_getComponentMethodInfo,
-                self,
-                args,
-                &exception);
+            void *result =
+                g_invoke(
+                    g_getComponentMethodInfo,
+                    self,
+                    args,
+                    &exception);
 
             if (exception)
             {
-                static int probeExcLogs = 0;
+                static int exceptionLogs = 0;
 
-                if (probeExcLogs++ < 20)
+                if (exceptionLogs++ < 10)
                 {
                     LOGE(
-                        "GetComponent probe exception: self=%p type=%p methodInfo=%p exc=%p",
+                        "GetComponent runtime invoke exception "
+                        "self=%p type=%p methodInfo=%p exc=%p",
                         self,
                         type,
                         g_getComponentMethodInfo,
@@ -1766,41 +1975,47 @@ extern "C"
                 return nullptr;
             }
 
-            if (managedResult)
-                return managedResult;
+            if (result)
+                return result;
         }
 
         return nullptr;
     }
 
-    static void *AddComponentHook(void *self, void *type, void *methodInfo)
+    static void *AddComponentHook(
+        void *self,
+        void *type,
+        void *methodInfo)
     {
         if (!self || !type)
             return nullptr;
 
-        const char *typeName = TypeNameForLog(type);
-        void *typeClass = GetComponentTypeClass(type);
+        const char *typeName =
+            TypeNameForLog(type);
+
+        void *typeClass =
+            GetComponentTypeClass(type);
 
         AddCompLog(
-            "AddComponent(%s) self=%p type=%p class=%p typeObjClass=%s",
+            "AddComponent(%s) self=%p type=%p class=%p",
             typeName,
             self,
             type,
-            typeClass,
-            ObjClassNameForLog(type));
+            typeClass);
 
-        // This catches components which were already created earlier
-        // during the same constructor, including components introduced
-        // indirectly by RequireComponent/dependencies.
+        // First check the constructor-local cache.
 
         if (g_ctorFrameDepth > 0 && typeClass)
         {
-            void *cached = FindCtorCachedComponent(self, typeClass);
+            void *cached =
+                FindCtorCachedComponent(
+                    self,
+                    typeClass);
 
             if (cached)
             {
                 AddCompLog(
-                    "constructor cache hit for %s -> %p",
+                    "CACHE HIT %s -> %p",
                     typeName,
                     cached);
 
@@ -1808,54 +2023,51 @@ extern "C"
             }
         }
 
-        // Ask Unity normally.
-        void *existing = GetComponentExisting(self, type);
+        // Ask Unity whether the component already exists.
 
-        AddCompLog(
-            "GetComponent(%s) -> existing=%p",
-            typeName,
-            existing);
+        void *existing =
+            GetComponentExisting(
+                self,
+                type);
 
         if (existing)
         {
             AddCompLog(
-                "reusing existing component %s -> %p",
+                "EXISTING %s -> %p",
                 typeName,
                 existing);
 
             if (typeClass)
-                RememberCtorComponent(self, typeClass, existing);
+            {
+                RememberCtorComponent(
+                    self,
+                    typeClass,
+                    existing);
+            }
 
             return existing;
         }
 
-        // Nothing was found. Let Unity perform the real AddComponent.
+        // No existing component: perform the real native operation.
 
-        void *result = nullptr;
+        if (!g_addComponentOrig)
+            return nullptr;
 
-        if (g_addComponentOrig)
-        {
-            typedef void *(*AddComponentFn)(
-                void *,
-                void *,
-                void *);
+        typedef void *(*AddComponentFn)(
+            void *,
+            void *,
+            void *);
 
-            AddCompLog(
-                "calling original AddComponent(%s)",
-                typeName);
-
-            result = ((AddComponentFn)g_addComponentOrig)(
+        void *result =
+            ((AddComponentFn)g_addComponentOrig)(
                 self,
                 type,
                 methodInfo);
 
-            AddCompLog(
-                "original AddComponent(%s) returned %p",
-                typeName,
-                result);
-        }
-
-        // Remember every successfully created component during the current constructor.
+        AddCompLog(
+            "CREATED %s -> %p",
+            typeName,
+            result);
 
         if (result && typeClass)
         {
@@ -1867,54 +2079,116 @@ extern "C"
             return result;
         }
 
-        // Unity can report a duplicate internally and return null even
-        // though the component ended up attached to the GameObject.
+        // Last recovery attempt.
 
-        void *recovered = GetComponentExisting(self, type);
+        void *recovered =
+            GetComponentExisting(
+                self,
+                type);
 
         if (recovered)
         {
             AddCompLog(
-                "post-add recovery for %s -> %p",
+                "RECOVERED %s -> %p",
                 typeName,
                 recovered);
 
             if (typeClass)
+            {
                 RememberCtorComponent(
                     self,
                     typeClass,
                     recovered);
+            }
 
             return recovered;
         }
 
         AddCompLog(
-            "AddComponent(%s) produced no component",
+            "FAILED %s",
             typeName);
 
         return nullptr;
     }
 
-    int mod2_install_addcomponent_hook(void *addComponentMethodPtr, void *getComponentMethodInfo, void *getComponentFuncPtr)
+    int mod2_install_addcomponent_hook(
+        void *addComponentMethodPtr,
+        void *getComponentMethodInfo,
+        void *getComponentFuncPtr)
     {
         if (g_addComponentInstalled)
             return 1;
-        if (!addComponentMethodPtr || !getComponentFuncPtr || !g_ready)
-            return 0;
-        if (Mod2FlagNextToLog("no_addcomponent_hook.flag"))
+
+        if (!getComponentFuncPtr ||
+            !getComponentMethodInfo ||
+            !g_ready)
         {
-            LOGI("AddComponent hook skipped (no_addcomponent_hook.flag present).");
             return 0;
         }
 
-        g_getComponentMethodInfo = getComponentMethodInfo;
-        g_getComponentFuncPtr = getComponentFuncPtr;
-        int rc = g_dobbyHook(addComponentMethodPtr, (void *)AddComponentHook, (void **)&g_addComponentOrig);
-        g_addComponentInstalled = (rc == 0);
+        if (Mod2FlagNextToLog(
+                "no_addcomponent_hook.flag"))
+        {
+            LOGI(
+                "AddComponent hook skipped "
+                "(no_addcomponent_hook.flag present).");
+
+            return 0;
+        }
+
+        g_getComponentMethodInfo =
+            getComponentMethodInfo;
+
+        g_getComponentFuncPtr =
+            getComponentFuncPtr;
+
+        // Note: Do not hook the managed AddComponent(Type) wrapper.
+        // Hook the actual native method used by that wrapper:
+        // Internal_AddComponentWithType(Type)
+
+        void *internalTarget =
+            ResolveInternalAddComponentWithType();
+
+        if (!internalTarget)
+        {
+            LOGE(
+                "Could not install Component hook: "
+                "Internal_AddComponentWithType target not found.");
+
+            return 0;
+        }
+
+        g_addComponentTarget =
+            internalTarget;
+
+        int rc =
+            g_dobbyHook(
+                g_addComponentTarget,
+                (void *)AddComponentHook,
+                (void **)&g_addComponentOrig);
+
+        g_addComponentInstalled =
+            (rc == 0);
+
         if (!g_addComponentInstalled)
-            LOGE("GameObject.AddComponent DobbyHook failed rc=%d", rc);
+        {
+            LOGE(
+                "Internal_AddComponentWithType DobbyHook "
+                "failed rc=%d target=%p",
+                rc,
+                g_addComponentTarget);
+        }
         else
-            LOGI("GameObject.AddComponent native compat hook installed.");
+        {
+            LOGI(
+                "GameObject.Internal_AddComponentWithType "
+                "native compat hook installed "
+                "(target=%p orig=%p publicAdd=%p).",
+                g_addComponentTarget,
+                g_addComponentOrig,
+                addComponentMethodPtr);
+        }
+
         return g_addComponentInstalled ? 1 : 0;
     }
 
