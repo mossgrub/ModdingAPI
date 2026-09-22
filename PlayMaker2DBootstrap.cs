@@ -16,11 +16,11 @@ namespace Modding
 
             _installed = true;
 
-            SceneManager.sceneLoaded +=
+            UnityEngine.SceneManagement.SceneManager.sceneLoaded +=
                 OnSceneLoaded;
 
             EnsureForScene(
-                SceneManager.GetActiveScene());
+                UnityEngine.SceneManagement.SceneManager.GetActiveScene());
 
             Logger.APILogger.Log(
                 "[PLAYMAKER2D] Bootstrap installed.");
@@ -68,7 +68,7 @@ namespace Modding
                     instance.name =
                         "PlayMaker Unity 2D";
 
-                    SceneManager.MoveGameObjectToScene(
+                    UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(
                         instance,
                         scene);
 
