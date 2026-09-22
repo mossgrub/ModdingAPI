@@ -107,26 +107,157 @@ namespace Modding
         {
             try
             {
-                Assembly asm = null;
-                try { asm = Assembly.LoadFrom(path); } catch { asm = null; }
+                byte[] originalBytes =
+                    File.ReadAllBytes(path);
 
-                if (asm == null)
+                bool patched;
+
+                byte[] loadBytes =
+                    RedirectMonoModRuntimeDetourReference(
+                        originalBytes,
+                        path,
+                        out patched);
+
+                Assembly asm;
+
+                if (patched)
                 {
-                    byte[] assemblyBytes = File.ReadAllBytes(path);
-                    asm = Assembly.Load(assemblyBytes);
+                    Logger.APILogger.Log(
+                        "[ILREDIRECT] Loading patched assembly: " +
+                        path);
+
+                    asm =
+                        Assembly.Load(loadBytes);
+                }
+                else
+                {
+                    try
+                    {
+                        asm =
+                            Assembly.LoadFrom(path);
+                    }
+                    catch
+                    {
+                        asm =
+                            Assembly.Load(originalBytes);
+                    }
                 }
 
                 if (asm != null)
                 {
-                    NativeCompat.AssemblyLocations[asm] = path;
+                    NativeCompat.AssemblyLocations[asm] =
+                        path;
                 }
 
                 return asm;
             }
             catch (Exception ex)
             {
-                Logger.APILogger.LogError($"HybridCLR failed to load {path}: {ex.Message}");
+                Logger.APILogger.LogError(
+                    $"HybridCLR failed to load {path}: {ex}");
+
                 return null;
+            }
+        }
+
+        private static byte[] RedirectMonoModRuntimeDetourReference(
+    byte[] assemblyBytes,
+    string assemblyPath,
+    out bool patched)
+        {
+            patched = false;
+
+            if (assemblyBytes == null ||
+                assemblyBytes.Length == 0)
+            {
+                return assemblyBytes;
+            }
+
+            try
+            {
+                using (MemoryStream input =
+                       new MemoryStream(assemblyBytes))
+                {
+                    Mono.Cecil.AssemblyDefinition assembly =
+                        Mono.Cecil.AssemblyDefinition.ReadAssembly(
+                            input);
+
+                    Mono.Cecil.AssemblyNameReference targetReference =
+                        null;
+
+                    foreach (
+                        Mono.Cecil.AssemblyNameReference reference
+                        in assembly.MainModule.AssemblyReferences)
+                    {
+                        if (string.Equals(
+                            reference.Name,
+                            "MonoMod.RuntimeDetour",
+                            StringComparison.OrdinalIgnoreCase))
+                        {
+                            targetReference = reference;
+                            break;
+                        }
+                    }
+
+                    if (targetReference == null)
+                    {
+                        return assemblyBytes;
+                    }
+
+                    Assembly apiAssembly =
+                        typeof(AssemblyLoader).Assembly;
+
+                    AssemblyName apiName =
+                        apiAssembly.GetName();
+
+                    Logger.APILogger.Log(
+                        "[ILREDIRECT] Found MonoMod.RuntimeDetour reference in: " +
+                        assemblyPath);
+
+                    Logger.APILogger.Log(
+                        "[ILREDIRECT] Original reference: " +
+                        targetReference.Name +
+                        ", Version=" +
+                        targetReference.Version);
+
+                    Logger.APILogger.Log(
+                        "[ILREDIRECT] Redirect target: " +
+                        apiName.Name +
+                        ", Version=" +
+                        apiName.Version);
+
+                    targetReference.Name =
+                        apiName.Name;
+
+                    targetReference.Version =
+                        apiName.Version;
+
+                    patched = true;
+
+                    using (MemoryStream output =
+                           new MemoryStream())
+                    {
+                        assembly.Write(output);
+
+                        byte[] result =
+                            output.ToArray();
+
+                        Logger.APILogger.Log(
+                            "[ILREDIRECT] Assembly reference rewritten successfully.");
+
+                        return result;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogError(
+                    "[ILREDIRECT] Failed to rewrite MonoMod.RuntimeDetour reference: " +
+                    ex);
+
+                patched = false;
+
+                return assemblyBytes;
             }
         }
 

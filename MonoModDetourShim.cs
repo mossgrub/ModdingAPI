@@ -213,15 +213,15 @@ namespace MonoMod.RuntimeDetour
             _manipulator = manipulator;
 
             Logger.APILogger.Log(
-                "ILHook provider: " +
+                "ILHook shim assembly: " +
                 typeof(ILHook).Assembly.FullName);
 
             Logger.APILogger.Log(
-                "ILHook provider location: " +
-                (typeof(ILHook).Assembly.Location ?? "<null>"));
+                "ILHook shim location: " +
+                typeof(ILHook).Assembly.Location);
 
             Logger.APILogger.Log(
-                "ILHook shim constructed for " +
+                "ILHook target: " +
                 method.DeclaringType?.FullName +
                 "." +
                 method.Name);
