@@ -20,6 +20,10 @@ namespace Modding
                 ReferenceDirectory,
                 "Assembly-CSharp.dll");
 
+        private static bool _prepared;
+
+        private static bool _preparationAttempted;
+
         public static string GetReferencePath()
         {
             return ReferencePath;
@@ -32,11 +36,67 @@ namespace Modding
             path = ReferencePath;
             error = null;
 
+            if (_prepared)
+            {
+                return File.Exists(ReferencePath);
+            }
+
+            if (_preparationAttempted)
+            {
+                return File.Exists(ReferencePath);
+            }
+
+            _preparationAttempted = true;
+
             try
             {
-                Directory.CreateDirectory(
-                    ReferenceDirectory);
+                if (!Directory.Exists(ReferenceDirectory))
+                {
+                    Directory.CreateDirectory(
+                        ReferenceDirectory);
 
+                    Logger.APILogger.Log(
+                        "[ILREF] Created reference directory: " +
+                        ReferenceDirectory);
+                }
+
+                TextAsset referenceAsset =
+                    null;
+
+                try
+                {
+                    referenceAsset =
+                        Resources.Load<TextAsset>(
+                            ResourcePath);
+                }
+                catch (Exception ex)
+                {
+                    Logger.APILogger.LogWarn(
+                        "[ILREF] Resources.Load failed: " +
+                        ex.Message);
+                }
+
+                if (referenceAsset != null &&
+                    referenceAsset.bytes != null &&
+                    referenceAsset.bytes.Length > 1024)
+                {
+                    File.WriteAllBytes(
+                        ReferencePath,
+                        referenceAsset.bytes);
+
+                    Logger.APILogger.Log(
+                        "[ILREF] Extracted Assembly-CSharp reference: " +
+                        ReferencePath +
+                        " (" +
+                        referenceAsset.bytes.Length +
+                        " bytes)");
+
+                    _prepared = true;
+
+                    return true;
+                }
+
+                // Fallback
                 if (File.Exists(ReferencePath))
                 {
                     FileInfo info =
@@ -44,56 +104,24 @@ namespace Modding
 
                     if (info.Length > 1024)
                     {
-                        Logger.APILogger.Log(
-                            "[ILREF] Reference assembly already exists: " +
-                            ReferencePath +
-                            " (" +
-                            info.Length +
-                            " bytes)");
+                        Logger.APILogger.LogWarn(
+                            "[ILREF] Resources reference was not found. " +
+                            "Using existing reference file: " +
+                            ReferencePath);
+
+                        _prepared = true;
 
                         return true;
                     }
                 }
 
-                TextAsset asset =
-                    Resources.Load<TextAsset>(ResourcePath);
+                error =
+                    "Assembly-CSharp reference resource/file not found.";
 
-                if (asset == null)
-                {
-                    error =
-                        "Embedded Assembly-CSharp reference resource not found: " +
-                        ResourcePath;
+                Logger.APILogger.LogError(
+                    "[ILREF] " + error);
 
-                    Logger.APILogger.LogError(
-                        "[ILREF] " + error);
-
-                    return false;
-                }
-
-                if (asset.bytes == null ||
-                    asset.bytes.Length < 1024)
-                {
-                    error =
-                        "Embedded Assembly-CSharp reference is empty or invalid.";
-
-                    Logger.APILogger.LogError(
-                        "[ILREF] " + error);
-
-                    return false;
-                }
-
-                File.WriteAllBytes(
-                    ReferencePath,
-                    asset.bytes);
-
-                Logger.APILogger.Log(
-                    "[ILREF] Extracted Assembly-CSharp reference: " +
-                    ReferencePath +
-                    " (" +
-                    asset.bytes.Length +
-                    " bytes)");
-
-                return true;
+                return false;
             }
             catch (Exception ex)
             {

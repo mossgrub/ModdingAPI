@@ -53,6 +53,9 @@ namespace Modding
         /// <summary>
         ///     All settings related to the the in game console
         /// </summary>
+        
+        public bool EnablePlayMaker2DBootstrap = true;
+
         public InGameConsoleSettings ConsoleSettings = new InGameConsoleSettings();
 
         /// <summary>

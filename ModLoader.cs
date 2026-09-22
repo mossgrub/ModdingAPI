@@ -212,13 +212,17 @@ namespace Modding
 				Logger.APILogger.LogWarn($"NativeCompat.Install failed: {ex.Message}");
 			}
 
-			try
+			if (ModHooks.GlobalSettings.EnablePlayMaker2DBootstrap)
 			{
+				Logger.APILogger.Log(
+					"PlayMaker 2D bootstrap enabled by Global Settings.");
+
 				PlayMaker2DBootstrap.Install();
 			}
-			catch (Exception ex)
+			else
 			{
-				Logger.APILogger.LogWarn($"PlayMaker2DBootstrap.Install failed: {ex.Message}");
+				Logger.APILogger.Log(
+					"PlayMaker 2D bootstrap disabled by Global Settings.");
 			}
 
 			global::ModManagerSettings.Load();

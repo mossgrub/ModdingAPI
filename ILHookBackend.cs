@@ -491,8 +491,8 @@ namespace Modding
             try
             {
                 if (!ReferenceAssemblyManager.EnsureReferenceAssembly(
-                    out string path,
-                    out string error))
+                        out string referencePath,
+                        out string error))
                 {
                     Logger.APILogger.LogError(
                         "[ILREF] " + error);
@@ -500,28 +500,30 @@ namespace Modding
                     return null;
                 }
 
-                if (!File.Exists(path))
+                if (string.IsNullOrEmpty(referencePath) ||
+                    !File.Exists(referencePath))
                 {
                     Logger.APILogger.LogError(
-                        "[ILREF] Reference file does not exist: " +
-                        path);
+                        "[ILREF] Reference assembly path does not exist: " +
+                        referencePath);
 
                     return null;
                 }
 
                 Logger.APILogger.Log(
                     "[ILREF] Reading Cecil reference assembly: " +
-                    path);
+                    referencePath);
 
                 DefaultAssemblyResolver resolver =
                     new DefaultAssemblyResolver();
 
                 string directory =
-                    Path.GetDirectoryName(path);
+                    Path.GetDirectoryName(referencePath);
 
                 if (!string.IsNullOrEmpty(directory))
                 {
-                    resolver.AddSearchDirectory(directory);
+                    resolver.AddSearchDirectory(
+                        directory);
                 }
 
                 ReaderParameters readerParameters =
@@ -532,12 +534,20 @@ namespace Modding
                     };
 
                 using (FileStream stream =
-                       File.OpenRead(path))
+                       File.OpenRead(referencePath))
                 {
                     AssemblyDefinition assembly =
                         AssemblyDefinition.ReadAssembly(
                             stream,
                             readerParameters);
+
+                    if (assembly == null)
+                    {
+                        Logger.APILogger.LogError(
+                            "[ILREF] Cecil returned null AssemblyDefinition.");
+
+                        return null;
+                    }
 
                     Logger.APILogger.Log(
                         "[ILREF] Cecil loaded reference: " +
@@ -565,7 +575,7 @@ namespace Modding
                 if (runtimeMethod == null)
                 {
                     Logger.APILogger.LogWarn(
-                        "Runtime method is null.");
+                        "[ILREF] Runtime method is null.");
 
                     return null;
                 }
@@ -573,26 +583,45 @@ namespace Modding
                 if (referenceAssembly == null)
                 {
                     Logger.APILogger.LogWarn(
-                        "Cecil reference assembly is null.");
+                        "[ILREF] Cecil reference assembly is null.");
+
+                    return null;
+                }
+
+                Type declaringType =
+                    runtimeMethod.DeclaringType;
+
+                if (declaringType == null)
+                {
+                    Logger.APILogger.LogWarn(
+                        "[ILREF] Runtime declaring type is null.");
 
                     return null;
                 }
 
                 string typeName =
-                    runtimeMethod.DeclaringType.FullName
+                    declaringType.FullName
                         .Replace('+', '/');
 
+                Logger.APILogger.Log(
+                    "[ILREF] Searching reference type: " +
+                    typeName);
+
                 TypeDefinition type =
-                    referenceAssembly.MainModule.GetType(typeName);
+                    referenceAssembly.MainModule.GetType(
+                        typeName);
 
                 if (type == null)
                 {
                     Logger.APILogger.LogWarn(
-                        "Reference type not found: " +
+                        "[ILREF] Reference type not found: " +
                         typeName);
 
                     return null;
                 }
+
+                ParameterInfo[] runtimeParameters =
+                    runtimeMethod.GetParameters();
 
                 MethodDefinition method =
                     null;
@@ -600,11 +629,11 @@ namespace Modding
                 foreach (MethodDefinition candidate
                          in type.Methods)
                 {
-                    if (candidate.Name != runtimeMethod.Name)
+                    if (candidate.Name !=
+                        runtimeMethod.Name)
+                    {
                         continue;
-
-                    ParameterInfo[] runtimeParameters =
-                        runtimeMethod.GetParameters();
+                    }
 
                     if (candidate.Parameters.Count !=
                         runtimeParameters.Length)
@@ -637,29 +666,37 @@ namespace Modding
                         }
                     }
 
-                    if (sameSignature)
+                    if (!sameSignature)
                     {
-                        method = candidate;
-                        break;
+                        continue;
                     }
+
+                    method = candidate;
+                    break;
                 }
 
                 if (method == null)
                 {
                     Logger.APILogger.LogWarn(
-                        "Reference method not found: " +
+                        "[ILREF] Reference method not found: " +
+                        declaringType.FullName +
+                        "." +
                         runtimeMethod.Name);
 
                     return null;
                 }
+
+                Logger.APILogger.Log(
+                    "[ILREF] Reference method resolved: " +
+                    method.FullName);
 
                 return method;
             }
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
-                    "Failed to extract IL with Cecil: " +
-                    ex.Message);
+                    "[ILREF] Failed to extract method with Cecil: " +
+                    ex);
 
                 return null;
             }

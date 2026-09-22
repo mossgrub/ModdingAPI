@@ -1,5 +1,4 @@
 using System;
-using System.Reflection;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -7,7 +6,21 @@ namespace Modding
 {
     public static class PlayMaker2DBootstrap
     {
+        private const string PrefabResourcePath =
+            "PlayMaker Unity 2D";
+
+        private const string InstanceName =
+            "PlayMaker Unity 2D";
+
         private static bool _installed;
+
+        public static bool IsInstalled
+        {
+            get
+            {
+                return _installed;
+            }
+        }
 
         public static void Install()
         {
@@ -16,153 +29,240 @@ namespace Modding
 
             _installed = true;
 
-            UnityEngine.SceneManagement.SceneManager.sceneLoaded +=
-                OnSceneLoaded;
+            try
+            {
+                UnityEngine.SceneManagement.SceneManager.sceneLoaded +=
+                    OnSceneLoaded;
 
-            EnsureForScene(
-                UnityEngine.SceneManagement.SceneManager.GetActiveScene());
+                EnsureCurrentScene();
+
+                Logger.APILogger.Log(
+                    "[PLAYMAKER2D] Bootstrap installed.");
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogError(
+                    "[PLAYMAKER2D] Bootstrap installation failed: " +
+                    ex);
+
+                try
+                {
+                    UnityEngine.SceneManagement.SceneManager.sceneLoaded -=
+                        OnSceneLoaded;
+                }
+                catch
+                {
+                }
+
+                _installed = false;
+            }
+        }
+
+        public static void Uninstall()
+        {
+            if (!_installed)
+                return;
+
+            try
+            {
+                UnityEngine.SceneManagement.SceneManager.sceneLoaded -=
+                    OnSceneLoaded;
+            }
+            catch
+            {
+            }
+
+            _installed = false;
 
             Logger.APILogger.Log(
-                "[PLAYMAKER2D] Bootstrap installed.");
+                "[PLAYMAKER2D] Bootstrap uninstalled.");
         }
 
         private static void OnSceneLoaded(
             Scene scene,
             LoadSceneMode mode)
         {
-            EnsureForScene(scene);
+            try
+            {
+                EnsureScene(scene);
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogError(
+                    "[PLAYMAKER2D] Scene bootstrap failed: " +
+                    ex);
+            }
         }
 
-        private static void EnsureForScene(
+        private static void EnsureCurrentScene()
+        {
+            try
+            {
+                Scene scene =
+                    UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+
+                if (!scene.IsValid())
+                {
+                    Logger.APILogger.LogWarn(
+                        "[PLAYMAKER2D] Active scene is invalid.");
+
+                    return;
+                }
+
+                EnsureScene(scene);
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogError(
+                    "[PLAYMAKER2D] Current scene bootstrap failed: " +
+                    ex);
+            }
+        }
+
+        private static void EnsureScene(
             Scene scene)
         {
             if (!scene.IsValid())
                 return;
 
-            GameObject[] roots =
-                scene.GetRootGameObjects();
+            if (!scene.isLoaded)
+                return;
 
-            foreach (GameObject root in roots)
+            if (HasExistingInstance(scene))
             {
-                if (root == null)
-                    continue;
+                Logger.APILogger.LogFine(
+                    "[PLAYMAKER2D] Existing instance found in scene: " +
+                    scene.name);
 
-                if (root.name ==
-                    "PlayMaker Unity 2D")
-                {
-                    return;
-                }
+                return;
             }
 
             GameObject prefab =
-                FindPlayMaker2DPrefab();
+                LoadPrefab();
 
-            if (prefab != null)
-            {
-                try
-                {
-                    GameObject instance =
-                        UnityEngine.Object.Instantiate(
-                            prefab);
-
-                    instance.name =
-                        "PlayMaker Unity 2D";
-
-                    UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(
-                        instance,
-                        scene);
-
-                    Logger.APILogger.Log(
-                        "[PLAYMAKER2D] Prefab instantiated.");
-
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    Logger.APILogger.LogWarn(
-                        "[PLAYMAKER2D] Prefab instantiate failed: " +
-                        ex.Message);
-                }
-            }
-
-            Type componentType =
-                FindPlayMaker2DType();
-
-            if (componentType == null)
+            if (prefab == null)
             {
                 Logger.APILogger.LogWarn(
-                    "[PLAYMAKER2D] PlayMakerUnity2d component type not found.");
+                    "[PLAYMAKER2D] PlayMaker Unity 2D prefab not found. " +
+                    "Bootstrap will not modify this scene.");
 
                 return;
             }
 
             try
             {
-                GameObject go =
-                    new GameObject(
-                        "PlayMaker Unity 2D");
+                GameObject instance =
+                    UnityEngine.Object.Instantiate(
+                        prefab);
 
-                go.AddComponent(componentType);
+                if (instance == null)
+                {
+                    Logger.APILogger.LogWarn(
+                        "[PLAYMAKER2D] Instantiate returned null.");
+
+                    return;
+                }
+
+                instance.name =
+                    InstanceName;
+
+                UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(
+                    instance,
+                    scene);
 
                 Logger.APILogger.Log(
-                    "[PLAYMAKER2D] Created runtime bootstrap using " +
-                    componentType.FullName);
+                    "[PLAYMAKER2D] Instantiated PlayMaker Unity 2D " +
+                    "in scene: " +
+                    scene.name);
             }
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
-                    "[PLAYMAKER2D] Failed to create runtime bootstrap: " +
+                    "[PLAYMAKER2D] Failed to instantiate PlayMaker Unity 2D: " +
                     ex);
             }
         }
 
-        private static GameObject FindPlayMaker2DPrefab()
+        private static GameObject LoadPrefab()
         {
-            GameObject[] objects =
-                Resources.FindObjectsOfTypeAll<GameObject>();
-
-            foreach (GameObject go in objects)
+            try
             {
-                if (go == null)
-                    continue;
+                GameObject prefab =
+                    Resources.Load<GameObject>(
+                        PrefabResourcePath);
 
-                if (go.name !=
-                    "PlayMaker Unity 2D")
-                    continue;
+                if (prefab != null)
+                {
+                    Logger.APILogger.Log(
+                        "[PLAYMAKER2D] Prefab loaded from Resources: " +
+                        PrefabResourcePath);
 
-                if (!go.scene.IsValid())
-                    return go;
+                    return prefab;
+                }
+
+                Logger.APILogger.LogWarn(
+                    "[PLAYMAKER2D] Resources.Load returned null for: " +
+                    PrefabResourcePath);
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogError(
+                    "[PLAYMAKER2D] Failed to load prefab: " +
+                    ex);
             }
 
             return null;
         }
 
-        private static Type FindPlayMaker2DType()
+        private static bool HasExistingInstance(
+            Scene scene)
         {
-            foreach (Assembly asm
-                     in AppDomain.CurrentDomain.GetAssemblies())
+            try
             {
-                try
+                GameObject[] roots =
+                    scene.GetRootGameObjects();
+
+                for (int i = 0;
+                     i < roots.Length;
+                     i++)
                 {
-                    foreach (Type type
-                             in asm.GetTypes())
+                    GameObject root =
+                        roots[i];
+
+                    if (root == null)
+                        continue;
+
+                    Transform[] transforms =
+                        root.GetComponentsInChildren<
+                            Transform>(
+                                true);
+
+                    for (int j = 0;
+                         j < transforms.Length;
+                         j++)
                     {
-                        if (type.Name ==
-                                "PlayMakerUnity2d" ||
-                            type.Name ==
-                                "PlayMakerUnity2D")
+                        Transform transform =
+                            transforms[j];
+
+                        if (transform == null)
+                            continue;
+
+                        if (transform.name ==
+                            InstanceName)
                         {
-                            return type;
+                            return true;
                         }
                     }
                 }
-                catch
-                {
-                    // Ignore assemblies whose types cannot be enumerated.
-                }
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogWarn(
+                    "[PLAYMAKER2D] Existing-instance check failed: " +
+                    ex.Message);
             }
 
-            return null;
+            return false;
         }
     }
 }
