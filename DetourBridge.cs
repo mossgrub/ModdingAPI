@@ -20,6 +20,84 @@ namespace Modding
         [DllImport("dobby", EntryPoint = "DobbyDestroy")]
         private static extern int DobbyUnhookNative(IntPtr target);
 
+        [ThreadStatic]
+        private static Dictionary<MethodInfo, IntPtr>
+    _currentNativeSelf;
+
+        private static IntPtr PushNativeSelf(
+        MethodInfo method,
+        IntPtr self,
+        out bool hadPrevious,
+        out IntPtr previous)
+        {
+            hadPrevious = false;
+            previous = IntPtr.Zero;
+
+            if (method == null ||
+                self == IntPtr.Zero)
+            {
+                return self;
+            }
+
+            if (_currentNativeSelf == null)
+            {
+                _currentNativeSelf =
+                    new Dictionary<MethodInfo, IntPtr>();
+            }
+
+            if (_currentNativeSelf.TryGetValue(
+                method,
+                out previous))
+            {
+                hadPrevious = true;
+            }
+
+            _currentNativeSelf[method] =
+                self;
+
+            return self;
+        }
+
+        private static void PopNativeSelf(
+            MethodInfo method,
+            bool hadPrevious,
+            IntPtr previous)
+        {
+            if (_currentNativeSelf == null ||
+                method == null)
+            {
+                return;
+            }
+
+            if (hadPrevious)
+            {
+                _currentNativeSelf[method] =
+                    previous;
+            }
+            else
+            {
+                _currentNativeSelf.Remove(method);
+            }
+        }
+
+        internal static IntPtr GetCurrentNativeSelf(
+            MethodInfo method)
+        {
+            if (method == null ||
+                _currentNativeSelf == null)
+            {
+                return IntPtr.Zero;
+            }
+
+            IntPtr value;
+
+            return _currentNativeSelf.TryGetValue(
+                method,
+                out value)
+                ? value
+                : IntPtr.Zero;
+        }
+
         private static void TryUnhook(IntPtr target)
         {
             if (target == IntPtr.Zero) return;
@@ -638,59 +716,91 @@ namespace Modding
             if (!BridgeStates.TryGetValue(typeof(TSlot), out BridgeState st) || st.Orig == null)
                 return;
 
-            int argLen = args != null ? args.Length : 0;
-            if (argLen > 0 && st.RefIndexes != null)
+            IntPtr rawSelf = IntPtr.Zero;
+            bool hadPreviousSelf = false;
+            IntPtr previousSelf = IntPtr.Zero;
+
+            if (st.InstanceCall && args != null && args.Length > 0 && args[0] is IntPtr)
             {
-                for (int i = 0; i < st.RefIndexes.Length; i++)
+                rawSelf = (IntPtr)args[0];
+
+                PushNativeSelf(
+                    st.Target,
+                    rawSelf,
+                    out hadPreviousSelf,
+                    out previousSelf);
+
+                Logger.APILogger.LogDebug(
+                    "Native self context: " +
+                    st.Target.Name +
+                    " -> 0x" +
+                    rawSelf.ToInt64().ToString("X"));
+            }
+
+            try
+            {
+                int argLen = args != null ? args.Length : 0;
+                if (argLen > 0 && st.RefIndexes != null)
                 {
-                    int ri = st.RefIndexes[i];
-                    if (ri >= 0 && ri < argLen && args[ri] is IntPtr p)
+                    for (int i = 0; i < st.RefIndexes.Length; i++)
                     {
-                        try
+                        int ri = st.RefIndexes[i];
+                        if (ri >= 0 && ri < argLen && args[ri] is IntPtr p)
                         {
-                            args[ri] = p == IntPtr.Zero ? null : NativeBridge.FromObjectPtr(p);
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.APILogger.LogError($"Failed to convert pointer in argument {ri}: {ex.Message}");
-                            args[ri] = null;
+                            try
+                            {
+                                args[ri] = p == IntPtr.Zero ? null : NativeBridge.FromObjectPtr(p);
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.APILogger.LogError($"Failed to convert pointer in argument {ri}: {ex.Message}");
+                                args[ri] = null;
+                            }
                         }
                     }
                 }
-            }
 
-            object[] full = new object[argLen + 1];
-            full[0] = st.Orig;
-            if (argLen > 0)
-            {
-                Array.Copy(args, 0, full, 1, argLen);
-            }
-
-            lock (st.Handlers)
-            {
-                if (st.Handlers.Count > 0)
+                object[] full = new object[argLen + 1];
+                full[0] = st.Orig;
+                if (argLen > 0)
                 {
-                    for (int i = 0; i < st.Handlers.Count; i++)
+                    Array.Copy(args, 0, full, 1, argLen);
+                }
+
+                lock (st.Handlers)
+                {
+                    if (st.Handlers.Count > 0)
                     {
-                        try
+                        for (int i = 0; i < st.Handlers.Count; i++)
                         {
-                            st.Handlers[i].DynamicInvoke(full);
+                            try
+                            {
+                                st.Handlers[i].DynamicInvoke(full);
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.APILogger.LogError("DetourBridge hook invocation error: " + ex);
+                            }
                         }
-                        catch (Exception ex)
-                        {
-                            Logger.APILogger.LogError("DetourBridge hook invocation error: " + ex);
-                        }
+                        return;
                     }
-                    return;
+                }
+
+                if (st.Replacement != null)
+                {
+                    try { st.Replacement.DynamicInvoke(full); }
+                    catch (Exception ex) { Logger.APILogger.LogError("DetourBridge hook invocation error: " + ex); }
                 }
             }
-
-            if (st.Replacement != null)
+            finally
             {
-                try { st.Replacement.DynamicInvoke(full); }
-                catch (Exception ex) { Logger.APILogger.LogError("DetourBridge hook invocation error: " + ex); }
+                PopNativeSelf(
+                    st.Target,
+                    hadPreviousSelf,
+                    previousSelf);
             }
         }
+
 
         private static void TryRebuildOrig(BridgeState st)
         {
@@ -744,63 +854,95 @@ namespace Modding
                 return default;
             }
 
-            int argLen = args != null ? args.Length : 0;
-            if (argLen > 0 && st.RefIndexes != null)
+            IntPtr rawSelf = IntPtr.Zero;
+            bool hadPreviousSelf = false;
+            IntPtr previousSelf = IntPtr.Zero;
+
+            if (st.InstanceCall && args != null && args.Length > 0 && args[0] is IntPtr)
             {
-                for (int i = 0; i < st.RefIndexes.Length; i++)
+                rawSelf = (IntPtr)args[0];
+
+                PushNativeSelf(
+                    st.Target,
+                    rawSelf,
+                    out hadPreviousSelf,
+                    out previousSelf);
+
+                Logger.APILogger.LogDebug(
+                    "Native self context: " +
+                    st.Target.Name +
+                    " -> 0x" +
+                    rawSelf.ToInt64().ToString("X"));
+            }
+
+            try
+            {
+                int argLen = args != null ? args.Length : 0;
+                if (argLen > 0 && st.RefIndexes != null)
                 {
-                    int ri = st.RefIndexes[i];
-                    if (ri >= 0 && ri < argLen && args[ri] is IntPtr p)
-                        args[ri] = p == IntPtr.Zero ? null : NativeBridge.FromObjectPtr(p);
+                    for (int i = 0; i < st.RefIndexes.Length; i++)
+                    {
+                        int ri = st.RefIndexes[i];
+                        if (ri >= 0 && ri < argLen && args[ri] is IntPtr p)
+                            args[ri] = p == IntPtr.Zero ? null : NativeBridge.FromObjectPtr(p);
+                    }
                 }
-            }
-            object[] full = new object[argLen + 1];
-            full[0] = st.Orig;
-            if (argLen > 0)
-            {
-                Array.Copy(args, 0, full, 1, argLen);
-            }
-
-            R result = default;
-            bool invoked = false;
-
-            lock (st.Handlers)
-            {
-                if (st.Handlers.Count > 0)
+                object[] full = new object[argLen + 1];
+                full[0] = st.Orig;
+                if (argLen > 0)
                 {
-                    for (int i = 0; i < st.Handlers.Count; i++)
+                    Array.Copy(args, 0, full, 1, argLen);
+                }
+
+                R result = default;
+                bool invoked = false;
+
+                lock (st.Handlers)
+                {
+                    if (st.Handlers.Count > 0)
+                    {
+                        for (int i = 0; i < st.Handlers.Count; i++)
+                        {
+                            try
+                            {
+                                object r = st.Handlers[i].DynamicInvoke(full);
+                                if (r is R rr) { result = rr; invoked = true; }
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.APILogger.LogError(
+                                    "DetourBridge hook invocation error [" +
+                                    typeof(TSlot).Name + " #" + i + "]: " + ex);
+                            }
+                        }
+                    }
+                    else if (st.Replacement != null)
                     {
                         try
                         {
-                            object r = st.Handlers[i].DynamicInvoke(full);
+                            object r = st.Replacement.DynamicInvoke(full);
                             if (r is R rr) { result = rr; invoked = true; }
                         }
                         catch (Exception ex)
                         {
                             Logger.APILogger.LogError(
                                 "DetourBridge hook invocation error [" +
-                                typeof(TSlot).Name + " #" + i + "]: " + ex);
+                                typeof(TSlot).Name + " replacement]: " + ex);
                         }
                     }
                 }
-                else if (st.Replacement != null)
-                {
-                    try
-                    {
-                        object r = st.Replacement.DynamicInvoke(full);
-                        if (r is R rr) { result = rr; invoked = true; }
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.APILogger.LogError(
-                            "DetourBridge hook invocation error [" +
-                            typeof(TSlot).Name + " replacement]: " + ex);
-                    }
-                }
-            }
 
-            return invoked ? result : default;
+                return invoked ? result : default;
+            }
+            finally
+            {
+                PopNativeSelf(
+                    st.Target,
+                    hadPreviousSelf,
+                    previousSelf);
+            }
         }
+
 
         internal static IntPtr InvokeBridgePtr<TSlot>(object[] args)
         {

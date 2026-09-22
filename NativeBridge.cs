@@ -330,7 +330,39 @@ namespace Modding
 
                     pin = slots != null ? GCHandle.Alloc(slots, GCHandleType.Pinned) : default(GCHandle);
                     IntPtr argsPtr = slots != null ? pin.AddrOfPinnedObject() : IntPtr.Zero;
-                    IntPtr objPtr = instanceCall ? ToObjectPtr(args[0]) : IntPtr.Zero;
+                    IntPtr objPtr =
+                        IntPtr.Zero;
+
+                    if (instanceCall)
+                    {
+                        objPtr =
+                            DetourBridge.GetCurrentNativeSelf(
+                                target);
+
+                        if (objPtr != IntPtr.Zero)
+                        {
+                            Logger.APILogger.LogDebug(
+                                "InvokeOrig using native self context for " +
+                                target.Name +
+                                ": 0x" +
+                                objPtr.ToInt64().ToString("X"));
+                        }
+
+                        if (objPtr == IntPtr.Zero &&
+                            args != null &&
+                            args.Length > 0)
+                        {
+                            objPtr =
+                                ToObjectPtr(args[0]);
+
+                            if (objPtr != IntPtr.Zero)
+                            {
+                                Logger.APILogger.LogDebug(
+                                    "InvokeOrig using managed ObjectToPtr fallback for " +
+                                    target.Name);
+                            }
+                        }
+                    }
                     IntPtr exc = IntPtr.Zero;
 
                     IntPtr result = InvokeOrigNative(nativeMethod, trampoline, objPtr, argsPtr, exc);

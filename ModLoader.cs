@@ -212,6 +212,15 @@ namespace Modding
 				Logger.APILogger.LogWarn($"NativeCompat.Install failed: {ex.Message}");
 			}
 
+			try
+			{
+				PlayMaker2DBootstrap.Install();
+			}
+			catch (Exception ex)
+			{
+				Logger.APILogger.LogWarn($"PlayMaker2DBootstrap.Install failed: {ex.Message}");
+			}
+
 			global::ModManagerSettings.Load();
 			if (global::ModManagerSettings.GameVanillaMode)
 			{

@@ -103,50 +103,66 @@ namespace Modding
             }
         }
 
-        private static Assembly LoadAssemblyHybridCLR(string path)
+        private static Assembly LoadAssemblyHybridCLR(
+    string path)
         {
             try
             {
-                byte[] originalBytes =
+                byte[] assemblyBytes =
                     File.ReadAllBytes(path);
 
-                bool patched;
+                if (assemblyBytes == null ||
+                    assemblyBytes.Length == 0)
+                {
+                    Logger.APILogger.LogError(
+                        "HybridCLR assembly is empty: " +
+                        path);
+
+                    return null;
+                }
 
                 byte[] loadBytes =
+                    assemblyBytes;
+
+                bool patched = false;
+
+                loadBytes =
                     RedirectMonoModRuntimeDetourReference(
-                        originalBytes,
+                        assemblyBytes,
                         path,
                         out patched);
 
-                Assembly asm;
+                Assembly asm =
+                    Assembly.Load(loadBytes);
+
+                if (asm == null)
+                {
+                    Logger.APILogger.LogError(
+                        "Assembly.Load returned null: " +
+                        path);
+
+                    return null;
+                }
+
+                NativeCompat.AssemblyLocations[asm] =
+                    path;
+
+                Logger.APILogger.Log(
+                    "[HYBRIDCLR] Assembly.Load(bytes): " +
+                    asm.FullName);
 
                 if (patched)
                 {
                     Logger.APILogger.Log(
-                        "[ILREDIRECT] Loading patched assembly: " +
-                        path);
-
-                    asm =
-                        Assembly.Load(loadBytes);
-                }
-                else
-                {
-                    try
-                    {
-                        asm =
-                            Assembly.LoadFrom(path);
-                    }
-                    catch
-                    {
-                        asm =
-                            Assembly.Load(originalBytes);
-                    }
+                        "[HYBRIDCLR] Assembly was reference-patched before load.");
                 }
 
-                if (asm != null)
+                if (string.Equals(
+                    asm.GetName().Name,
+                    "Vasi",
+                    StringComparison.Ordinal))
                 {
-                    NativeCompat.AssemblyLocations[asm] =
-                        path;
+                    DiagnoseVasi(asm);
                 }
 
                 return asm;
@@ -154,9 +170,81 @@ namespace Modding
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
-                    $"HybridCLR failed to load {path}: {ex}");
+                    "HybridCLR failed to load " +
+                    path +
+                    ": " +
+                    ex);
 
                 return null;
+            }
+        }
+
+        private static void DiagnoseVasi(
+    Assembly asm)
+        {
+            try
+            {
+                Logger.APILogger.Log(
+                    "[VASI] FullName: " +
+                    asm.FullName);
+
+                Logger.APILogger.Log(
+                    "[VASI] Location: " +
+                    asm.Location);
+
+                Type type =
+                    asm.GetType(
+                        "Vasi.FsmUtil",
+                        false);
+
+                Logger.APILogger.Log(
+                    "[VASI] FsmUtil direct lookup: " +
+                    (type != null
+                        ? "FOUND"
+                        : "MISSING"));
+
+                try
+                {
+                    Type[] types =
+                        asm.GetTypes();
+
+                    bool found = false;
+
+                    foreach (Type t in types)
+                    {
+                        if (t.FullName == "Vasi.FsmUtil")
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    Logger.APILogger.Log(
+                        "[VASI] FsmUtil GetTypes: " +
+                        (found ? "FOUND" : "MISSING"));
+                }
+                catch (ReflectionTypeLoadException ex)
+                {
+                    Logger.APILogger.LogError(
+                        "[VASI] ReflectionTypeLoadException.");
+
+                    foreach (Exception loaderException
+                             in ex.LoaderExceptions)
+                    {
+                        if (loaderException != null)
+                        {
+                            Logger.APILogger.LogError(
+                                "[VASI] LoaderException: " +
+                                loaderException);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogError(
+                    "[VASI] Diagnostic failed: " +
+                    ex);
             }
         }
 

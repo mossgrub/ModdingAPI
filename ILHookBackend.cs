@@ -189,7 +189,7 @@ namespace Modding
                     "HookGen signature: " +
                     DescribeMethodSignature(hookInvoke));
 
-                Assembly referenceAssembly =
+                AssemblyDefinition referenceAssembly =
                     LoadReferenceAssembly();
 
                 if (referenceAssembly == null)
@@ -486,104 +486,104 @@ namespace Modding
             return null;
         }
 
-        private static Assembly LoadReferenceAssembly()
+        private static AssemblyDefinition LoadReferenceAssembly()
         {
             try
             {
-                string[] searchPaths =
+                if (!ReferenceAssemblyManager.EnsureReferenceAssembly(
+                    out string path,
+                    out string error))
                 {
-                    Path.Combine(
-                        Application.streamingAssetsPath,
-                        "HybridCLRData",
-                        "il2cpp_data",
-                        "Managed"),
+                    Logger.APILogger.LogError(
+                        "[ILREF] " + error);
 
-                    Path.Combine(
-                        Application.dataPath,
-                        "Managed"),
-
-                    Application.streamingAssetsPath,
-
-                    Path.Combine(
-                        Application.persistentDataPath,
-                        "Mods")
-                };
-
-                string[] assemblyNames =
-                {
-                    "Assembly-CSharp",
-                    "Assembly-CSharp-firstpass"
-                };
-
-                foreach (string searchPath in searchPaths)
-                {
-                    if (string.IsNullOrEmpty(searchPath) ||
-                        !Directory.Exists(searchPath))
-                    {
-                        continue;
-                    }
-
-                    foreach (string assemblyName in assemblyNames)
-                    {
-                        string path =
-                            Path.Combine(
-                                searchPath,
-                                assemblyName + ".dll");
-
-                        if (!File.Exists(path))
-                            continue;
-
-                        Logger.APILogger.Log(
-                            "Loading IL reference assembly: " +
-                            path);
-
-                        return Assembly.LoadFrom(path);
-                    }
+                    return null;
                 }
 
-                Logger.APILogger.LogWarn(
-                    "IL reference assembly not found.");
+                if (!File.Exists(path))
+                {
+                    Logger.APILogger.LogError(
+                        "[ILREF] Reference file does not exist: " +
+                        path);
 
-                return null;
+                    return null;
+                }
+
+                Logger.APILogger.Log(
+                    "[ILREF] Reading Cecil reference assembly: " +
+                    path);
+
+                DefaultAssemblyResolver resolver =
+                    new DefaultAssemblyResolver();
+
+                string directory =
+                    Path.GetDirectoryName(path);
+
+                if (!string.IsNullOrEmpty(directory))
+                {
+                    resolver.AddSearchDirectory(directory);
+                }
+
+                ReaderParameters readerParameters =
+                    new ReaderParameters
+                    {
+                        AssemblyResolver = resolver,
+                        ReadSymbols = false
+                    };
+
+                using (FileStream stream =
+                       File.OpenRead(path))
+                {
+                    AssemblyDefinition assembly =
+                        AssemblyDefinition.ReadAssembly(
+                            stream,
+                            readerParameters);
+
+                    Logger.APILogger.Log(
+                        "[ILREF] Cecil loaded reference: " +
+                        assembly.Name.FullName);
+
+                    return assembly;
+                }
             }
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
-                    "Failed to load IL reference assembly: " +
-                    ex.Message);
+                    "[ILREF] Failed to load Cecil reference: " +
+                    ex);
 
                 return null;
             }
         }
 
         private static MethodDefinition ExtractMethodWithMonoCecil(
-            MethodInfo runtimeMethod,
-            Assembly referenceAssembly)
+    MethodInfo runtimeMethod,
+    AssemblyDefinition referenceAssembly)
         {
             try
             {
-                string refAsmPath =
-                    referenceAssembly.Location;
-
-                if (string.IsNullOrEmpty(refAsmPath) ||
-                    !File.Exists(refAsmPath))
+                if (runtimeMethod == null)
                 {
                     Logger.APILogger.LogWarn(
-                        "Reference assembly location not found.");
+                        "Runtime method is null.");
 
                     return null;
                 }
 
-                AssemblyDefinition asm =
-                    AssemblyDefinition.ReadAssembly(
-                        refAsmPath);
+                if (referenceAssembly == null)
+                {
+                    Logger.APILogger.LogWarn(
+                        "Cecil reference assembly is null.");
+
+                    return null;
+                }
 
                 string typeName =
                     runtimeMethod.DeclaringType.FullName
                         .Replace('+', '/');
 
                 TypeDefinition type =
-                    asm.MainModule.GetType(typeName);
+                    referenceAssembly.MainModule.GetType(typeName);
 
                 if (type == null)
                 {
