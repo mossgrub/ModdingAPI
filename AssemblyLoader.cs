@@ -56,6 +56,15 @@ namespace Modding
                     _loadedAssemblies[asm.GetName().Name] = asm;
                     NativeCompat.RegisterAssemblyPath(asm, path);
                     NativeBridge.Register(asm, path);
+
+                    if (string.Equals(
+                        asm.GetName().Name,
+                        "Vasi",
+                        StringComparison.Ordinal))
+                    {
+                        DiagnoseVasi(asm);
+                    }
+
                     try
                     {
                         string dir = Path.GetDirectoryName(path);
@@ -103,66 +112,73 @@ namespace Modding
             }
         }
 
-        private static Assembly LoadAssemblyHybridCLR(
-    string path)
+        private static Assembly LoadAssemblyHybridCLR(string path)
         {
             try
             {
-                byte[] assemblyBytes =
+                byte[] originalBytes =
                     File.ReadAllBytes(path);
 
-                if (assemblyBytes == null ||
-                    assemblyBytes.Length == 0)
+                if (originalBytes == null ||
+                    originalBytes.Length == 0)
                 {
                     Logger.APILogger.LogError(
-                        "HybridCLR assembly is empty: " +
-                        path);
+                        "HybridCLR assembly is empty: " + path);
 
                     return null;
                 }
-
-                byte[] loadBytes =
-                    assemblyBytes;
 
                 bool patched = false;
 
-                loadBytes =
+                byte[] loadBytes =
                     RedirectMonoModRuntimeDetourReference(
-                        assemblyBytes,
+                        originalBytes,
                         path,
                         out patched);
 
-                Assembly asm =
-                    Assembly.Load(loadBytes);
-
-                if (asm == null)
-                {
-                    Logger.APILogger.LogError(
-                        "Assembly.Load returned null: " +
-                        path);
-
-                    return null;
-                }
-
-                NativeCompat.AssemblyLocations[asm] =
-                    path;
-
-                Logger.APILogger.Log(
-                    "[HYBRIDCLR] Assembly.Load(bytes): " +
-                    asm.FullName);
+                Assembly asm = null;
 
                 if (patched)
                 {
                     Logger.APILogger.Log(
-                        "[HYBRIDCLR] Assembly was reference-patched before load.");
+                        "[HYBRIDCLR] Loading patched assembly from bytes: " +
+                        path);
+
+                    asm =
+                        Assembly.Load(loadBytes);
+                }
+                else
+                {
+                    try
+                    {
+                        Logger.APILogger.Log(
+                            "[HYBRIDCLR] Loading original assembly from file: " +
+                            path);
+
+                        asm =
+                            Assembly.LoadFrom(path);
+                    }
+                    catch (Exception loadFromException)
+                    {
+                        Logger.APILogger.LogWarn(
+                            "[HYBRIDCLR] Assembly.LoadFrom failed for " +
+                            path +
+                            ": " +
+                            loadFromException.Message);
+
+                        Logger.APILogger.Log(
+                            "[HYBRIDCLR] Falling back to Assembly.Load(bytes): " +
+                            path);
+
+                        asm =
+                            Assembly.Load(loadBytes);
+                    }
                 }
 
-                if (string.Equals(
-                    asm.GetName().Name,
-                    "Vasi",
-                    StringComparison.Ordinal))
+                if (asm != null)
                 {
-                    DiagnoseVasi(asm);
+                    NativeCompat.AssemblyLocations[asm] =
+                        path;
                 }
 
                 return asm;
@@ -179,66 +195,36 @@ namespace Modding
             }
         }
 
-        private static void DiagnoseVasi(
-    Assembly asm)
+        private static void DiagnoseVasi(Assembly asm)
         {
             try
             {
+                if (asm == null)
+                {
+                    Logger.APILogger.LogWarn(
+                        "[VASI] Assembly is null.");
+
+                    return;
+                }
+
                 Logger.APILogger.Log(
                     "[VASI] FullName: " +
                     asm.FullName);
 
                 Logger.APILogger.Log(
-                    "[VASI] Location: " +
-                    asm.Location);
+                    "[VASI] IsDynamic: " +
+                    asm.IsDynamic);
 
-                Type type =
+                Type fsmUtil =
                     asm.GetType(
                         "Vasi.FsmUtil",
                         false);
 
                 Logger.APILogger.Log(
-                    "[VASI] FsmUtil direct lookup: " +
-                    (type != null
+                    "[VASI] FsmUtil: " +
+                    (fsmUtil != null
                         ? "FOUND"
                         : "MISSING"));
-
-                try
-                {
-                    Type[] types =
-                        asm.GetTypes();
-
-                    bool found = false;
-
-                    foreach (Type t in types)
-                    {
-                        if (t.FullName == "Vasi.FsmUtil")
-                        {
-                            found = true;
-                            break;
-                        }
-                    }
-
-                    Logger.APILogger.Log(
-                        "[VASI] FsmUtil GetTypes: " +
-                        (found ? "FOUND" : "MISSING"));
-                }
-                catch (ReflectionTypeLoadException ex)
-                {
-                    Logger.APILogger.LogError(
-                        "[VASI] ReflectionTypeLoadException.");
-
-                    foreach (Exception loaderException
-                             in ex.LoaderExceptions)
-                    {
-                        if (loaderException != null)
-                        {
-                            Logger.APILogger.LogError(
-                                "[VASI] LoaderException: " +
-                                loaderException);
-                        }
-                    }
-                }
             }
             catch (Exception ex)
             {
