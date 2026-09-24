@@ -745,8 +745,8 @@ namespace Modding
             out string ghostTypeName,
             out string replacementDelegateTypeName)
         {
-            ghostTypeFullName = null;
-            replacementDelegateFullName = null;
+            ghostTypeName = null;
+            replacementDelegateTypeName = null;
 
             try
             {
@@ -766,7 +766,8 @@ namespace Modding
                     assembly.MainModule;
 
                 TypeReference objectType =
-                    module.ImportReference(typeof(object));
+                    module.ImportReference(
+                        typeof(object));
 
                 string ns =
                     string.IsNullOrEmpty(
@@ -777,26 +778,30 @@ namespace Modding
                 string id =
                     Guid.NewGuid().ToString("N");
 
-                string ghostTypeName =
+                string generatedGhostTypeName =
                     originalMethod.DeclaringType.Name +
                     "_ILHook_" +
                     id;
 
-                string delegateName =
+                string generatedDelegateTypeName =
                     originalMethod.DeclaringType.Name +
                     "_ILHookDelegate_" +
                     id;
 
-                ghostTypeFullName =
-                    ns + "." + ghostTypeName;
+                ghostTypeName =
+                    ns +
+                    "." +
+                    generatedGhostTypeName;
 
-                replacementDelegateFullName =
-                    ns + "." + delegateName;
+                replacementDelegateTypeName =
+                    ns +
+                    "." +
+                    generatedDelegateTypeName;
 
                 TypeDefinition replacementDelegate =
                     new TypeDefinition(
                         ns,
-                        delegateName,
+                        generatedDelegateTypeName,
                         Mono.Cecil.TypeAttributes.Public |
                         Mono.Cecil.TypeAttributes.Sealed |
                         Mono.Cecil.TypeAttributes.Class,
@@ -895,7 +900,7 @@ namespace Modding
                 TypeDefinition ghostType =
                     new TypeDefinition(
                         ns,
-                        ghostTypeName,
+                        generatedGhostTypeName,
                         Mono.Cecil.TypeAttributes.Public |
                         Mono.Cecil.TypeAttributes.Class,
                         objectType);
