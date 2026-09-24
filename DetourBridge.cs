@@ -545,6 +545,97 @@ namespace Modding
             return GetDelegateTypeForMethod(method, out _);
         }
 
+        internal static Type GetManagedDelegateTypeForMethod(
+    MethodInfo method,
+    out string error)
+        {
+            error = null;
+
+            if (method == null)
+            {
+                error = "null method";
+                return null;
+            }
+
+            int arity =
+                method.GetParameters().Length +
+                (method.IsStatic ? 0 : 1);
+
+            if (arity > MaxArgs)
+            {
+                error =
+                    "unsupported arity " +
+                    arity +
+                    " (max " +
+                    MaxArgs +
+                    ")";
+
+                return null;
+            }
+
+            Type[] typeArgs =
+                new Type[arity];
+
+            int index = 0;
+
+            if (!method.IsStatic)
+            {
+                typeArgs[index++] =
+                    method.DeclaringType;
+            }
+
+            foreach (ParameterInfo parameter
+                     in method.GetParameters())
+            {
+                if (parameter.ParameterType.IsByRef)
+                {
+                    error =
+                        "byref parameter not supported";
+
+                    return null;
+                }
+
+                typeArgs[index++] =
+                    parameter.ParameterType;
+            }
+
+            try
+            {
+                if (method.ReturnType == typeof(void))
+                {
+                    return VoidDelegateTypes[arity]
+                        .MakeGenericType(typeArgs);
+                }
+
+                Type[] returnArgs =
+                    new Type[arity + 1];
+
+                Array.Copy(
+                    typeArgs,
+                    returnArgs,
+                    arity);
+
+                returnArgs[arity] =
+                    method.ReturnType;
+
+                return ReturningDelegateTypes[arity]
+                    .MakeGenericType(returnArgs);
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return null;
+            }
+        }
+
+        internal static Type GetManagedDelegateTypeForMethod(
+            MethodInfo method)
+        {
+            return GetManagedDelegateTypeForMethod(
+                method,
+                out _);
+        }
+
         private static bool IsRefTypeForBridge(Type t)
         {
             if (t == null) return false;

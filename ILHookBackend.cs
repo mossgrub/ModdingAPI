@@ -145,19 +145,24 @@ namespace Modding
                 }
 
                 Type origDelegateType =
-                    DetourBridge.GetDelegateTypeForMethod(
-                        methodInfo);
+                    DetourBridge.GetManagedDelegateTypeForMethod(
+                    methodInfo,
+                    out string delegateTypeError);
 
                 if (origDelegateType == null)
                 {
                     error =
-                        "Could not create managed delegate type for target.";
+                        "Could not create managed IL orig delegate type: " +
+                        delegateTypeError;
+
+                    Logger.APILogger.LogError(
+                        "[ILHOOK] " + error);
 
                     return false;
                 }
 
                 Logger.APILogger.Log(
-                    "[ILHOOK] Managed target delegate: " +
+                    "[ILHOOK] Managed IL orig delegate: " +
                     origDelegateType.FullName);
 
                 AssemblyDefinition referenceAssembly =
@@ -737,8 +742,8 @@ namespace Modding
             MethodInfo originalMethod,
             MethodDefinition modifiedCecilMethod,
             Type origDelegateType,
-            out string ghostTypeFullName,
-            out string replacementDelegateFullName)
+            out string ghostTypeName,
+            out string replacementDelegateTypeName)
         {
             ghostTypeFullName = null;
             replacementDelegateFullName = null;
