@@ -65,6 +65,8 @@ namespace Modding
                         DiagnoseVasi(asm);
                     }
 
+                    DiagnosePlayMakerAssembly();
+
                     try
                     {
                         string dir = Path.GetDirectoryName(path);
@@ -195,11 +197,11 @@ namespace Modding
             }
         }
 
-        private static void DiagnoseVasi(Assembly asm)
+        private static void DiagnoseVasi(Assembly assembly)
         {
             try
             {
-                if (asm == null)
+                if (assembly == null)
                 {
                     Logger.APILogger.LogWarn(
                         "[VASI] Assembly is null.");
@@ -209,27 +211,98 @@ namespace Modding
 
                 Logger.APILogger.Log(
                     "[VASI] FullName: " +
-                    asm.FullName);
+                    assembly.FullName);
 
                 Logger.APILogger.Log(
                     "[VASI] IsDynamic: " +
-                    asm.IsDynamic);
-
-                Type fsmUtil =
-                    asm.GetType(
-                        "Vasi.FsmUtil",
-                        false);
+                    assembly.IsDynamic);
 
                 Logger.APILogger.Log(
-                    "[VASI] FsmUtil: " +
-                    (fsmUtil != null
-                        ? "FOUND"
-                        : "MISSING"));
+                    "[VASI] FsmUtil lookup begin.");
+
+                try
+                {
+                    Type fsmUtil =
+                        assembly.GetType(
+                            "Vasi.FsmUtil",
+                            false);
+
+                    Logger.APILogger.Log(
+                        "[VASI] FsmUtil lookup: " +
+                        (fsmUtil != null
+                            ? "FOUND"
+                            : "MISSING"));
+                }
+                catch (Exception ex)
+                {
+                    Logger.APILogger.LogError(
+                        "[VASI] FsmUtil lookup exception: " +
+                        ex);
+                }
+
+                try
+                {
+                    AssemblyName[] references =
+                        assembly.GetReferencedAssemblies();
+
+                    foreach (AssemblyName reference
+                             in references)
+                    {
+                        Logger.APILogger.Log(
+                            "[VASI] Reference: " +
+                            reference.FullName);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.APILogger.LogWarn(
+                        "[VASI] Could not enumerate references: " +
+                        ex.Message);
+                }
+
+                Logger.APILogger.Log(
+                    "[VASI] Dependency diagnostic finished.");
             }
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
                     "[VASI] Diagnostic failed: " +
+                    ex);
+            }
+        }
+
+        private static void DiagnosePlayMakerAssembly()
+        {
+            try
+            {
+                Assembly[] assemblies =
+                    AppDomain.CurrentDomain.GetAssemblies();
+
+                foreach (Assembly assembly in assemblies)
+                {
+                    string name =
+                        assembly.GetName().Name;
+
+                    if (string.Equals(
+                            name,
+                            "PlayMaker",
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        Logger.APILogger.Log(
+                            "[VASI] PlayMaker assembly found: " +
+                            assembly.FullName);
+
+                        return;
+                    }
+                }
+
+                Logger.APILogger.LogWarn(
+                    "[VASI] PlayMaker assembly NOT found.");
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogError(
+                    "[VASI] PlayMaker diagnostic failed: " +
                     ex);
             }
         }

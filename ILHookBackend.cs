@@ -29,6 +29,12 @@ namespace Modding
 
         private static readonly object HookLock = new object();
 
+        private static readonly object ReferenceAssemblyLock = new object();
+
+        private static AssemblyDefinition CachedReferenceAssembly;
+
+        private static MemoryStream CachedReferenceStream;
+
         public static bool IsAvailable
         {
             get
@@ -61,42 +67,30 @@ namespace Modding
 
             if (!IsAvailable)
             {
-                error = "IL hook backend not available.";
+                error =
+                    "IL hook backend not available.";
+
                 return false;
             }
 
-            MethodInfo methodInfo = method as MethodInfo;
+            MethodInfo methodInfo =
+                method as MethodInfo;
 
             if (methodInfo == null)
             {
-                error = "Only MethodInfo targets are supported.";
+                error =
+                    "Only MethodInfo targets are supported.";
+
                 return false;
             }
 
             if (handler == null)
             {
-                error = "IL hook handler is null.";
+                error =
+                    "IL hook handler is null.";
+
                 return false;
             }
-
-            Logger.APILogger.Log(
-                "IL hook begin!");
-
-            Logger.APILogger.Log(
-                "IL target: " +
-                methodInfo.DeclaringType?.FullName +
-                "." +
-                methodInfo.Name);
-
-            Logger.APILogger.Log(
-                "IL handler type: " +
-                handler.GetType().FullName);
-
-            Logger.APILogger.Log(
-                "IL handler method: " +
-                handler.Method.DeclaringType?.FullName +
-                "." +
-                handler.Method.Name);
 
             MonoMod.Cil.ILContext.Manipulator manipulator =
                 handler as MonoMod.Cil.ILContext.Manipulator;
@@ -104,12 +98,16 @@ namespace Modding
             if (manipulator == null)
             {
                 error =
-                    "Handler is not a MonoMod.Cil.ILContext.Manipulator.";
-
-                Logger.APILogger.LogError(error);
+                    "Handler is not an ILContext.Manipulator.";
 
                 return false;
             }
+
+            Logger.APILogger.Log(
+                "[ILHOOK] Begin: " +
+                methodInfo.DeclaringType?.FullName +
+                "." +
+                methodInfo.Name);
 
             lock (HookLock)
             {
@@ -119,9 +117,7 @@ namespace Modding
                         "An IL hook is already active for this method.";
 
                     Logger.APILogger.LogWarn(
-                        "IL hook already active: " +
-                        methodInfo.DeclaringType?.FullName +
-                        "." +
+                        "[ILHOOK] Already active: " +
                         methodInfo.Name);
 
                     return false;
@@ -134,9 +130,7 @@ namespace Modding
                     methodInfo.ContainsGenericParameters)
                 {
                     error =
-                        "Generic IL hook targets are not supported by this initial backend.";
-
-                    Logger.APILogger.LogWarn(error);
+                        "Generic IL hook targets are not supported.";
 
                     return false;
                 }
@@ -145,49 +139,26 @@ namespace Modding
                     methodInfo.DeclaringType.ContainsGenericParameters)
                 {
                     error =
-                        "Methods declared on generic types are not supported by this initial backend.";
-
-                    Logger.APILogger.LogWarn(error);
+                        "Methods declared on generic types are not supported.";
 
                     return false;
                 }
 
-                Type hookDelegateType =
-                    FindHookDelegateType(methodInfo);
+                Type origDelegateType =
+                    DetourBridge.GetDelegateTypeForMethod(
+                        methodInfo);
 
-                if (hookDelegateType == null)
+                if (origDelegateType == null)
                 {
                     error =
-                        "Could not find HookGen hook delegate for " +
-                        methodInfo.DeclaringType?.FullName +
-                        "." +
-                        methodInfo.Name;
-
-                    Logger.APILogger.LogWarn(error);
+                        "Could not create managed delegate type for target.";
 
                     return false;
                 }
 
                 Logger.APILogger.Log(
-                    "Found HookGen delegate: " +
-                    hookDelegateType.FullName);
-
-                MethodInfo hookInvoke =
-                    hookDelegateType.GetMethod("Invoke");
-
-                if (hookInvoke == null)
-                {
-                    error =
-                        "HookGen delegate has no Invoke method.";
-
-                    Logger.APILogger.LogError(error);
-
-                    return false;
-                }
-
-                Logger.APILogger.Log(
-                    "HookGen signature: " +
-                    DescribeMethodSignature(hookInvoke));
+                    "[ILHOOK] Managed target delegate: " +
+                    origDelegateType.FullName);
 
                 AssemblyDefinition referenceAssembly =
                     LoadReferenceAssembly();
@@ -214,25 +185,29 @@ namespace Modding
                 }
 
                 Logger.APILogger.Log(
-                    "Extracted reference IL method: " +
+                    "[ILHOOK] Extracted: " +
                     cecilMethod.FullName);
 
                 if (!ModifyILWithMonoMod(
-                    cecilMethod,
-                    manipulator))
+                        cecilMethod,
+                        manipulator))
                 {
-                    error = "IL manipulation failed.";
+                    error =
+                        "IL manipulation failed.";
+
                     return false;
                 }
 
                 Logger.APILogger.Log(
-                    "IL manipulator finished successfully.");
+                    "[ILHOOK] Manipulator completed.");
 
                 byte[] ghostDll =
                     CreateGhostDll(
                         methodInfo,
                         cecilMethod,
-                        hookDelegateType);
+                        origDelegateType,
+                        out string ghostTypeName,
+                        out string replacementDelegateTypeName);
 
                 if (ghostDll == null)
                 {
@@ -242,12 +217,13 @@ namespace Modding
                     return false;
                 }
 
-                MethodInfo ghostMethod =
+                GhostInfo ghost =
                     LoadGhostMethod(
                         ghostDll,
-                        methodInfo);
+                        ghostTypeName,
+                        replacementDelegateTypeName);
 
-                if (ghostMethod == null)
+                if (ghost == null)
                 {
                     error =
                         "Failed to load IL ghost method.";
@@ -256,14 +232,10 @@ namespace Modding
                 }
 
                 Logger.APILogger.Log(
-                    "Ghost managed method loaded: " +
-                    ghostMethod.DeclaringType?.FullName +
+                    "[ILHOOK] Ghost method loaded: " +
+                    ghost.GhostMethod.DeclaringType?.FullName +
                     "." +
-                    ghostMethod.Name);
-
-                Logger.APILogger.Log(
-                    "Ghost managed signature: " +
-                    DescribeMethodSignature(ghostMethod));
+                    ghost.GhostMethod.Name);
 
                 Delegate replacement;
 
@@ -271,37 +243,34 @@ namespace Modding
                 {
                     replacement =
                         Delegate.CreateDelegate(
-                            hookDelegateType,
-                            ghostMethod);
+                            ghost.ReplacementDelegateType,
+                            ghost.GhostMethod);
                 }
                 catch (Exception ex)
                 {
                     error =
-                        "Could not create HookGen replacement delegate: " +
-                        ex.Message;
-
-                    Logger.APILogger.LogError(error);
+                        "Could not create IL replacement delegate: " +
+                        ex;
 
                     return false;
                 }
 
                 Logger.APILogger.Log(
-                    "Replacement delegate created successfully.");
-
-                Logger.APILogger.Log(
-                    "Routing IL hook through DetourBridge AOT bridge.");
+                    "[ILHOOK] Replacement delegate created: " +
+                    replacement.GetType().FullName);
 
                 if (!DetourBridge.TryCreateOrigDetour(
-                    methodInfo,
-                    replacement,
-                    out Delegate trampoline,
-                    out string detourError))
+                        methodInfo,
+                        replacement,
+                        out Delegate trampoline,
+                        out string detourError))
                 {
                     error =
                         "DetourBridge failed: " +
                         detourError;
 
-                    Logger.APILogger.LogError(error);
+                    Logger.APILogger.LogError(
+                        "[ILHOOK] " + error);
 
                     return false;
                 }
@@ -309,35 +278,32 @@ namespace Modding
                 if (trampoline == null)
                 {
                     error =
-                        "DetourBridge returned a null trampoline.";
-
-                    Logger.APILogger.LogError(error);
+                        "DetourBridge returned null trampoline.";
 
                     return false;
                 }
 
                 lock (HookLock)
                 {
-                    ActiveHooks[method] = new ILHookState
-                    {
-                        GhostAssembly =
-                            ghostMethod.Module.Assembly.GetType()
-                                .Assembly,
+                    ActiveHooks[method] =
+                        new ILHookState
+                        {
+                            GhostAssembly =
+                                ghost.GhostAssembly,
 
-                        GhostMethod = ghostMethod,
+                            GhostMethod =
+                                ghost.GhostMethod,
 
-                        Replacement = replacement
-                    };
+                            Replacement =
+                                replacement
+                        };
                 }
 
                 Logger.APILogger.Log(
-                    "IL hook installed through AOT bridge.");
-
-                Logger.APILogger.Log(
-                    "IL target remains native; managed ghost is only reached through DetourBridge.");
-
-                Logger.APILogger.Log(
-                    "IL hook end!");
+                    "[ILHOOK] Installed successfully: " +
+                    methodInfo.DeclaringType?.FullName +
+                    "." +
+                    methodInfo.Name);
 
                 return true;
             }
@@ -347,7 +313,8 @@ namespace Modding
                     "IL hook failed: " +
                     ex;
 
-                Logger.APILogger.LogError(error);
+                Logger.APILogger.LogError(
+                    error);
 
                 return false;
             }
@@ -412,8 +379,7 @@ namespace Modding
             }
         }
 
-        private static Type FindHookDelegateType(
-            MethodInfo method)
+        private static Type FindHookDelegateType(MethodInfo method)
         {
             if (method == null ||
                 method.DeclaringType == null)
@@ -488,87 +454,114 @@ namespace Modding
 
         private static AssemblyDefinition LoadReferenceAssembly()
         {
-            try
+            lock (ReferenceAssemblyLock)
             {
-                if (!ReferenceAssemblyManager.EnsureReferenceAssembly(
-                        out string referencePath,
-                        out string error))
+                try
                 {
-                    Logger.APILogger.LogError(
-                        "[ILREF] " + error);
+                    if (CachedReferenceAssembly != null)
+                    {
+                        return CachedReferenceAssembly;
+                    }
 
-                    return null;
-                }
+                    if (!ReferenceAssemblyManager.EnsureReferenceAssembly(
+                            out string referencePath,
+                            out string error))
+                    {
+                        Logger.APILogger.LogError(
+                            "[ILREF] " + error);
 
-                if (string.IsNullOrEmpty(referencePath) ||
-                    !File.Exists(referencePath))
-                {
-                    Logger.APILogger.LogError(
-                        "[ILREF] Reference assembly path does not exist: " +
+                        return null;
+                    }
+
+                    if (string.IsNullOrEmpty(referencePath) ||
+                        !File.Exists(referencePath))
+                    {
+                        Logger.APILogger.LogError(
+                            "[ILREF] Reference file does not exist: " +
+                            referencePath);
+
+                        return null;
+                    }
+
+                    Logger.APILogger.Log(
+                        "[ILREF] Reading Cecil reference assembly: " +
                         referencePath);
 
-                    return null;
-                }
+                    byte[] bytes =
+                        File.ReadAllBytes(referencePath);
 
-                Logger.APILogger.Log(
-                    "[ILREF] Reading Cecil reference assembly: " +
-                    referencePath);
-
-                DefaultAssemblyResolver resolver =
-                    new DefaultAssemblyResolver();
-
-                string directory =
-                    Path.GetDirectoryName(referencePath);
-
-                if (!string.IsNullOrEmpty(directory))
-                {
-                    resolver.AddSearchDirectory(
-                        directory);
-                }
-
-                ReaderParameters readerParameters =
-                    new ReaderParameters
+                    if (bytes == null ||
+                        bytes.Length == 0)
                     {
-                        AssemblyResolver = resolver,
-                        ReadSymbols = false
-                    };
+                        Logger.APILogger.LogError(
+                            "[ILREF] Reference assembly is empty.");
 
-                using (FileStream stream =
-                       File.OpenRead(referencePath))
-                {
-                    AssemblyDefinition assembly =
+                        return null;
+                    }
+
+                    DefaultAssemblyResolver resolver =
+                        new DefaultAssemblyResolver();
+
+                    string directory =
+                        Path.GetDirectoryName(referencePath);
+
+                    if (!string.IsNullOrEmpty(directory))
+                    {
+                        resolver.AddSearchDirectory(
+                            directory);
+                    }
+
+                    CachedReferenceStream =
+                        new MemoryStream(
+                            bytes,
+                            writable: false);
+
+                    ReaderParameters readerParameters =
+                        new ReaderParameters
+                        {
+                            AssemblyResolver = resolver,
+                            ReadSymbols = false,
+                            InMemory = true
+                        };
+
+                    // Do not wrap CachedReferenceStream in a using block. 
+                    // It needs to remain open during the IL hooks.
+                    CachedReferenceAssembly =
                         AssemblyDefinition.ReadAssembly(
-                            stream,
+                            CachedReferenceStream,
                             readerParameters);
 
-                    if (assembly == null)
+                    if (CachedReferenceAssembly == null)
                     {
                         Logger.APILogger.LogError(
                             "[ILREF] Cecil returned null AssemblyDefinition.");
+
+                        CachedReferenceStream.Dispose();
+                        CachedReferenceStream = null;
 
                         return null;
                     }
 
                     Logger.APILogger.Log(
                         "[ILREF] Cecil loaded reference: " +
-                        assembly.Name.FullName);
+                        CachedReferenceAssembly.Name.FullName);
 
-                    return assembly;
+                    return CachedReferenceAssembly;
                 }
-            }
-            catch (Exception ex)
-            {
-                Logger.APILogger.LogError(
-                    "[ILREF] Failed to load Cecil reference: " +
-                    ex);
+                catch (Exception ex)
+                {
+                    Logger.APILogger.LogError(
+                        "[ILREF] Failed to load Cecil reference: " +
+                        ex);
 
-                return null;
+                    return null;
+                }
             }
         }
 
         private static MethodDefinition ExtractMethodWithMonoCecil(
-    MethodInfo runtimeMethod,
-    AssemblyDefinition referenceAssembly)
+            MethodInfo runtimeMethod,
+            AssemblyDefinition referenceAssembly)
         {
             try
             {
@@ -731,45 +724,27 @@ namespace Modding
             }
         }
 
+        private sealed class GhostInfo
+        {
+            public Assembly GhostAssembly;
+            public MethodInfo GhostMethod;
+            public Type ReplacementDelegateType;
+        }
+
+
+
         private static byte[] CreateGhostDll(
             MethodInfo originalMethod,
             MethodDefinition modifiedCecilMethod,
-            Type hookDelegateType)
+            Type origDelegateType,
+            out string ghostTypeFullName,
+            out string replacementDelegateFullName)
         {
+            ghostTypeFullName = null;
+            replacementDelegateFullName = null;
+
             try
             {
-                MethodInfo hookInvoke =
-                    hookDelegateType.GetMethod("Invoke");
-
-                if (hookInvoke == null)
-                {
-                    Logger.APILogger.LogError(
-                        "Hook delegate Invoke method missing.");
-
-                    return null;
-                }
-
-                ParameterInfo[] hookParameters =
-                    hookInvoke.GetParameters();
-
-                int expectedParameters =
-                    originalMethod.GetParameters().Length +
-                    (originalMethod.IsStatic ? 0 : 1) +
-                    1;
-
-                if (hookParameters.Length !=
-                    expectedParameters)
-                {
-                    Logger.APILogger.LogError(
-                        "Hook delegate parameter count mismatch. " +
-                        "Expected " +
-                        expectedParameters +
-                        ", got " +
-                        hookParameters.Length);
-
-                    return null;
-                }
-
                 AssemblyNameDefinition assemblyName =
                     new AssemblyNameDefinition(
                         "ILHookGhost_" +
@@ -786,30 +761,142 @@ namespace Modding
                     assembly.MainModule;
 
                 TypeReference objectType =
-                    module.ImportReference(
-                        typeof(object));
+                    module.ImportReference(typeof(object));
 
                 string ns =
                     string.IsNullOrEmpty(
-                        originalMethod.DeclaringType.Namespace)
+                        originalMethod.DeclaringType?.Namespace)
                         ? "ILHook"
                         : originalMethod.DeclaringType.Namespace;
+
+                string id =
+                    Guid.NewGuid().ToString("N");
+
+                string ghostTypeName =
+                    originalMethod.DeclaringType.Name +
+                    "_ILHook_" +
+                    id;
+
+                string delegateName =
+                    originalMethod.DeclaringType.Name +
+                    "_ILHookDelegate_" +
+                    id;
+
+                ghostTypeFullName =
+                    ns + "." + ghostTypeName;
+
+                replacementDelegateFullName =
+                    ns + "." + delegateName;
+
+                TypeDefinition replacementDelegate =
+                    new TypeDefinition(
+                        ns,
+                        delegateName,
+                        Mono.Cecil.TypeAttributes.Public |
+                        Mono.Cecil.TypeAttributes.Sealed |
+                        Mono.Cecil.TypeAttributes.Class,
+                        module.ImportReference(
+                            typeof(MulticastDelegate)));
+
+                module.Types.Add(
+                    replacementDelegate);
+
+                MethodDefinition delegateCtor =
+                    new MethodDefinition(
+                        ".ctor",
+                        Mono.Cecil.MethodAttributes.Public |
+                        Mono.Cecil.MethodAttributes.HideBySig |
+                        Mono.Cecil.MethodAttributes.SpecialName |
+                        Mono.Cecil.MethodAttributes.RTSpecialName,
+                        module.TypeSystem.Void);
+
+                delegateCtor.ImplAttributes =
+                    Mono.Cecil.MethodImplAttributes.Runtime |
+                    Mono.Cecil.MethodImplAttributes.Managed;
+
+                delegateCtor.Parameters.Add(
+                    new ParameterDefinition(
+                        "object",
+                        Mono.Cecil.ParameterAttributes.None,
+                        objectType));
+
+                delegateCtor.Parameters.Add(
+                    new ParameterDefinition(
+                        "method",
+                        Mono.Cecil.ParameterAttributes.None,
+                        module.ImportReference(
+                            typeof(IntPtr))));
+
+                replacementDelegate.Methods.Add(
+                    delegateCtor);
+
+                TypeReference returnType =
+                    module.ImportReference(
+                        originalMethod.ReturnType);
+
+                MethodDefinition delegateInvoke =
+                    new MethodDefinition(
+                        "Invoke",
+                        Mono.Cecil.MethodAttributes.Public |
+                        Mono.Cecil.MethodAttributes.HideBySig |
+                        Mono.Cecil.MethodAttributes.NewSlot |
+                        Mono.Cecil.MethodAttributes.Virtual,
+                        returnType);
+
+                delegateInvoke.ImplAttributes =
+                    Mono.Cecil.MethodImplAttributes.Runtime |
+                    Mono.Cecil.MethodImplAttributes.Managed;
+
+                delegateInvoke.Parameters.Add(
+                    new ParameterDefinition(
+                        "orig",
+                        Mono.Cecil.ParameterAttributes.None,
+                        module.ImportReference(
+                            origDelegateType)));
+
+                if (!originalMethod.IsStatic)
+                {
+                    delegateInvoke.Parameters.Add(
+                        new ParameterDefinition(
+                            "self",
+                            Mono.Cecil.ParameterAttributes.None,
+                            module.ImportReference(
+                                originalMethod.DeclaringType)));
+                }
+
+                foreach (ParameterInfo param
+                         in originalMethod.GetParameters())
+                {
+                    if (param.ParameterType.IsByRef)
+                    {
+                        Logger.APILogger.LogWarn(
+                            "[ILHOOK] By-ref parameters are not supported.");
+
+                        return null;
+                    }
+
+                    delegateInvoke.Parameters.Add(
+                        new ParameterDefinition(
+                            param.Name,
+                            (Mono.Cecil.ParameterAttributes)
+                                param.Attributes,
+                            module.ImportReference(
+                                param.ParameterType)));
+                }
+
+                replacementDelegate.Methods.Add(
+                    delegateInvoke);
 
                 TypeDefinition ghostType =
                     new TypeDefinition(
                         ns,
-                        originalMethod.DeclaringType.Name +
-                        "_ILHook_" +
-                        Guid.NewGuid().ToString("N"),
+                        ghostTypeName,
                         Mono.Cecil.TypeAttributes.Public |
                         Mono.Cecil.TypeAttributes.Class,
                         objectType);
 
-                module.Types.Add(ghostType);
-
-                TypeReference returnType =
-                    module.ImportReference(
-                        hookInvoke.ReturnType);
+                module.Types.Add(
+                    ghostType);
 
                 MethodDefinition ghostMethod =
                     new MethodDefinition(
@@ -819,72 +906,22 @@ namespace Modding
                         Mono.Cecil.MethodAttributes.HideBySig,
                         returnType);
 
-                ghostType.Methods.Add(ghostMethod);
+                ghostType.Methods.Add(
+                    ghostMethod);
 
-                Dictionary<ParameterDefinition, ParameterDefinition>
-                    parameterMap =
-                    new Dictionary<ParameterDefinition, ParameterDefinition>();
-
-                for (int i = 0;
-                     i < hookParameters.Length;
-                     i++)
+                foreach (ParameterDefinition param
+                         in delegateInvoke.Parameters)
                 {
-                    ParameterInfo param =
-                        hookParameters[i];
-
-                    if (param.ParameterType.IsByRef)
-                    {
-                        Logger.APILogger.LogWarn(
-                            "IL ghost does not currently support byref hook parameters.");
-
-                        return null;
-                    }
-
-                    TypeReference parameterType =
-                        module.ImportReference(
-                            param.ParameterType);
-
-                    ParameterDefinition ghostParameter =
+                    ghostMethod.Parameters.Add(
                         new ParameterDefinition(
                             param.Name,
-                            (Mono.Cecil.ParameterAttributes)
-                                param.Attributes,
-                            parameterType);
-
-                    ghostMethod.Parameters.Add(
-                        ghostParameter);
-                }
-
-                ParameterDefinition[] originalParameters =
-                    modifiedCecilMethod.Parameters.ToArray();
-
-                for (int i = 0;
-                     i < originalParameters.Length;
-                     i++)
-                {
-                    int newIndex = i + 1;
-
-                    ParameterDefinition newParameter =
-                        ghostMethod.Parameters[
-                            newIndex +
-                            (originalMethod.IsStatic ? 0 : 1)];
-
-                    parameterMap[
-                        originalParameters[i]] =
-                        newParameter;
-                }
-
-                if (modifiedCecilMethod.HasGenericParameters)
-                {
-                    Logger.APILogger.LogWarn(
-                        "Generic Cecil methods are not supported.");
-
-                    return null;
+                            param.Attributes,
+                            param.ParameterType));
                 }
 
                 ghostMethod.Body =
-                    new Mono.Cecil.Cil.MethodBody(
-                        ghostMethod);
+            new Mono.Cecil.Cil.MethodBody(
+                ghostMethod);
 
                 ghostMethod.Body.InitLocals =
                     modifiedCecilMethod.Body.InitLocals;
@@ -894,9 +931,12 @@ namespace Modding
                         modifiedCecilMethod.Body.MaxStackSize,
                         8);
 
-                Dictionary<VariableDefinition, VariableDefinition>
-                    localMap =
-                    new Dictionary<VariableDefinition, VariableDefinition>();
+                Dictionary<
+                    VariableDefinition,
+                    VariableDefinition> localMap =
+                    new Dictionary<
+                        VariableDefinition,
+                        VariableDefinition>();
 
                 foreach (VariableDefinition local
                          in modifiedCecilMethod.Body.Variables)
@@ -913,9 +953,37 @@ namespace Modding
                         ghostLocal;
                 }
 
-                Dictionary<Instruction, Instruction>
-                    instructionMap =
-                    new Dictionary<Instruction, Instruction>();
+                Dictionary<
+                    ParameterDefinition,
+                    ParameterDefinition> parameterMap =
+                    new Dictionary<
+                        ParameterDefinition,
+                        ParameterDefinition>();
+
+                ParameterDefinition[] originalParameters =
+                    modifiedCecilMethod.Parameters.ToArray();
+
+                for (int i = 0;
+                     i < originalParameters.Length;
+                     i++)
+                {
+                    int ghostIndex =
+                        i +
+                        1 +
+                        (originalMethod.IsStatic ? 0 : 1);
+
+                    parameterMap[
+                        originalParameters[i]] =
+                        ghostMethod.Parameters[
+                            ghostIndex];
+                }
+
+                Dictionary<
+                    Instruction,
+                    Instruction> instructionMap =
+                    new Dictionary<
+                        Instruction,
+                        Instruction>();
 
                 ILProcessor processor =
                     ghostMethod.Body.GetILProcessor();
@@ -940,15 +1008,16 @@ namespace Modding
 
                         if (originalMethod.IsStatic)
                         {
-                            // Ghost parameter 0 = orig delegate
-                            // Original arg 0 = ghost arg 1
-                            ghostArg = originalArg + 1;
+                            // ghost[0] = orig
+                            // original[0] = ghost[1]
+                            ghostArg =
+                                originalArg + 1;
                         }
                         else
                         {
-                            // Ghost parameter 0 = orig delegate
-                            // Ghost parameter 1 = original this
-                            // Original arg 1 = ghost arg 2
+                            // ghost[0] = orig
+                            // ghost[1] = self
+                            // original[0] = self
                             if (originalArg == 0 &&
                                 IsThisArgumentInstruction(
                                     originalInstruction.OpCode))
@@ -957,22 +1026,16 @@ namespace Modding
                             }
                             else
                             {
-                                ghostArg = originalArg + 2;
+                                ghostArg =
+                                    originalArg + 2;
                             }
-                        }
-
-                        if (ghostArg < 0 ||
-                            ghostArg >= ghostMethod.Parameters.Count)
-                        {
-                            throw new InvalidOperationException(
-                                "Invalid mapped argument index " +
-                                ghostArg);
                         }
 
                         clone =
                             CreateMappedArgumentInstruction(
                                 originalInstruction,
-                                ghostMethod.Parameters[ghostArg]);
+                                ghostMethod.Parameters[
+                                    ghostArg]);
                     }
                     else
                     {
@@ -980,8 +1043,7 @@ namespace Modding
                             Instruction.Create(
                                 originalInstruction.OpCode);
 
-                        clone.Operand =
-                            null;
+                        clone.Operand = null;
                     }
 
                     instructionMap[
@@ -994,15 +1056,15 @@ namespace Modding
                 foreach (Instruction originalInstruction
                          in modifiedCecilMethod.Body.Instructions)
                 {
-                    Instruction clone =
-                        instructionMap[
-                            originalInstruction];
-
                     if (IsArgumentInstruction(
                             originalInstruction.OpCode))
                     {
                         continue;
                     }
+
+                    Instruction clone =
+                        instructionMap[
+                            originalInstruction];
 
                     clone.Operand =
                         ImportOperand(
@@ -1061,9 +1123,6 @@ namespace Modding
                         newHandler);
                 }
 
-                string ghostMethodName =
-                    "Invoke";
-
                 using (MemoryStream stream =
                        new MemoryStream())
                 {
@@ -1073,7 +1132,7 @@ namespace Modding
                         stream.ToArray();
 
                     Logger.APILogger.Log(
-                        "Created IL ghost DLL: " +
+                        "[ILHOOK] Ghost DLL created: " +
                         result.Length +
                         " bytes.");
 
@@ -1083,38 +1142,47 @@ namespace Modding
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
-                    "Failed to create IL ghost DLL: " +
+                    "[ILHOOK] Failed to create ghost DLL: " +
                     ex);
 
                 return null;
             }
         }
 
-        private static MethodInfo LoadGhostMethod(
+        private static GhostInfo LoadGhostMethod(
             byte[] ghostDll,
-            MethodInfo originalMethod)
+            string ghostTypeName,
+            string replacementDelegateTypeName)
         {
             try
             {
                 Assembly ghostAssembly =
                     Assembly.Load(ghostDll);
 
-                Logger.APILogger.Log(
-                    "Ghost assembly loaded: " +
-                    ghostAssembly.FullName);
-
                 Type ghostType =
-                    ghostAssembly
-                        .GetTypes()
-                        .FirstOrDefault(
-                            t => t.Name.StartsWith(
-                                originalMethod.DeclaringType.Name +
-                                "_ILHook_"));
+                    ghostAssembly.GetType(
+                        ghostTypeName,
+                        false);
 
                 if (ghostType == null)
                 {
                     Logger.APILogger.LogError(
-                        "Could not locate IL ghost type.");
+                        "[ILHOOK] Ghost type not found: " +
+                        ghostTypeName);
+
+                    return null;
+                }
+
+                Type delegateType =
+                    ghostAssembly.GetType(
+                        replacementDelegateTypeName,
+                        false);
+
+                if (delegateType == null)
+                {
+                    Logger.APILogger.LogError(
+                        "[ILHOOK] Ghost delegate type not found: " +
+                        replacementDelegateTypeName);
 
                     return null;
                 }
@@ -1128,17 +1196,22 @@ namespace Modding
                 if (method == null)
                 {
                     Logger.APILogger.LogError(
-                        "Could not locate IL ghost Invoke method.");
+                        "[ILHOOK] Ghost Invoke method not found.");
 
                     return null;
                 }
 
-                return method;
+                return new GhostInfo
+                {
+                    GhostAssembly = ghostAssembly,
+                    GhostMethod = method,
+                    ReplacementDelegateType = delegateType
+                };
             }
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
-                    "Failed to load IL ghost method: " +
+                    "[ILHOOK] Failed to load ghost method: " +
                     ex);
 
                 return null;
