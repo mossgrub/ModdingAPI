@@ -7,13 +7,12 @@ namespace Modding
     public static class ReferenceAssemblyManager
     {
         private const string ResourcePath =
-            "Modding/ReferenceAssemblies/Assembly-CSharp";
+            "modding/Assembly-CSharp";
 
         private static readonly string ReferenceDirectory =
             Path.Combine(
                 Application.persistentDataPath,
-                "ModdingAPI",
-                "ReferenceAssemblies");
+                "Modding API");
 
         private static readonly string ReferencePath =
             Path.Combine(

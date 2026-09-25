@@ -198,65 +198,64 @@ namespace Modding
             }
         }
 
-        private static void DiagnoseVasi(
-            Assembly assembly)
+        private static void DiagnoseVasi(Assembly asm)
         {
+            if (asm == null)
+                return;
+
+            if (!string.Equals(
+                asm.GetName().Name,
+                "Vasi",
+                StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            Logger.APILogger.Log(
+                "[VASI] Assembly: " +
+                asm.FullName);
+
             try
             {
-                if (assembly == null)
-                {
-                    Logger.APILogger.LogWarn(
-                        "[VASI] Assembly is null.");
-
-                    return;
-                }
-
-                Logger.APILogger.Log(
-                    "[VASI] Assembly loaded: " +
-                    assembly.FullName);
-
                 Type fsmUtil =
-                    assembly.GetType(
+                    asm.GetType(
                         "Vasi.FsmUtil",
                         false);
 
                 Logger.APILogger.Log(
-                    "[VASI] FsmUtil: " +
+                    "[VASI] Vasi.FsmUtil: " +
                     (fsmUtil != null
                         ? "FOUND"
                         : "MISSING"));
 
-                AssemblyName[] references =
-                    assembly.GetReferencedAssemblies();
-
-                foreach (AssemblyName reference
-                         in references)
+                if (fsmUtil == null)
                 {
-                    Logger.APILogger.Log(
-                        "[VASI] Reference: " +
-                        reference.FullName);
+                    foreach (AssemblyName reference
+                             in asm.GetReferencedAssemblies())
+                    {
+                        Logger.APILogger.Log(
+                            "[VASI] Reference: " +
+                            reference.FullName);
+                    }
                 }
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                Logger.APILogger.LogError(
+                    "[VASI] ReflectionTypeLoadException");
 
-                Assembly playMaker =
-                    AppDomain.CurrentDomain
-                        .GetAssemblies()
-                        .FirstOrDefault(
-                            a =>
-                                string.Equals(
-                                    a.GetName().Name,
-                                    "PlayMaker",
-                                    StringComparison.OrdinalIgnoreCase));
-
-                Logger.APILogger.Log(
-                    "[VASI] PlayMaker loaded: " +
-                    (playMaker != null
-                        ? playMaker.FullName
-                        : "<NOT FOUND>"));
+                foreach (Exception loaderEx
+                         in ex.LoaderExceptions)
+                {
+                    Logger.APILogger.LogError(
+                        "[VASI] " +
+                        loaderEx);
+                }
             }
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
-                    "[VASI] Diagnostic failed: " +
+                    "[VASI] Diagnosis failed: " +
                     ex);
             }
         }

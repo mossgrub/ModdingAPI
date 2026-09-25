@@ -1553,6 +1553,7 @@ namespace Modding
             public Type DelegateType;
             public Type OrigType;
             public string[] RawParamTypes;
+            public bool IsGenerated;
         }
 
         private static readonly ConcurrentDictionary<Type, List<ConcreteBridgeInfo>> ConcreteBridges =
@@ -1569,21 +1570,54 @@ namespace Modding
             catch (Exception ex) { Logger.APILogger.LogError("GeneratedBridges.RegisterAll failed: " + ex); }
         }
 
-        private static void RegisterConcreteBridge(Type slotType, string bridgeMethodName, Type delegateType, Type origType)
+        private static void RegisterConcreteBridge(
+            Type slotType,
+            string bridgeMethodName,
+            Type delegateType,
+            Type origType)
         {
-            MethodInfo bridge = typeof(DetourBridge).GetMethod(bridgeMethodName,
+            MethodInfo bridge = typeof(DetourBridge).GetMethod(
+                bridgeMethodName,
                 BindingFlags.NonPublic | BindingFlags.Static);
-            RegisterBridge(delegateType, slotType, bridge, origType, null);
+
+            RegisterBridge(
+                delegateType,
+                slotType,
+                bridge,
+                origType,
+                null,
+                false);
         }
 
-        public static void RegisterGeneratedBridge(Type delegateType, Type slotType, MethodInfo bridge, Type origType, string[] rawParamTypes = null)
+        public static void RegisterGeneratedBridge(
+            Type delegateType,
+            Type slotType,
+            MethodInfo bridge,
+            Type origType,
+            string[] rawParamTypes = null)
         {
-            RegisterBridge(delegateType, slotType, bridge, origType, rawParamTypes);
+            RegisterBridge(
+                delegateType,
+                slotType,
+                bridge,
+                origType,
+                rawParamTypes,
+                true);
         }
 
-        private static void RegisterBridge(Type delegateType, Type slotType, MethodInfo bridge, Type origType, string[] rawParamTypes)
+        private static void RegisterBridge(
+            Type delegateType,
+            Type slotType,
+            MethodInfo bridge,
+            Type origType,
+            string[] rawParamTypes,
+            bool isGenerated)
         {
-            List<ConcreteBridgeInfo> list = ConcreteBridges.GetOrAdd(delegateType, _ => new List<ConcreteBridgeInfo>());
+            List<ConcreteBridgeInfo> list =
+                ConcreteBridges.GetOrAdd(
+                    delegateType,
+                    _ => new List<ConcreteBridgeInfo>());
+
             lock (list)
             {
                 list.Add(new ConcreteBridgeInfo
@@ -1592,15 +1626,22 @@ namespace Modding
                     Bridge = bridge,
                     DelegateType = delegateType,
                     OrigType = origType,
-                    RawParamTypes = rawParamTypes
+                    RawParamTypes = rawParamTypes,
+                    IsGenerated = isGenerated
                 });
             }
         }
 
-        private static bool TryGetFreeBridge(Type delegateType, out ConcreteBridgeInfo chosen)
+        private static bool TryGetFreeBridge(
+            Type delegateType,
+            MethodInfo targetMethod,
+            out ConcreteBridgeInfo chosen)
         {
             chosen = null;
-            if (!ConcreteBridges.TryGetValue(delegateType, out List<ConcreteBridgeInfo> list))
+
+            if (!ConcreteBridges.TryGetValue(
+                delegateType,
+                out List<ConcreteBridgeInfo> list))
             {
                 return false;
             }
@@ -1609,17 +1650,83 @@ namespace Modding
             {
                 foreach (ConcreteBridgeInfo cbi in list)
                 {
-                    if (IsSlotFree(cbi.Slot))
+                    if (!cbi.IsGenerated)
+                        continue;
+
+                    if (!IsSlotFree(cbi.Slot))
+                        continue;
+
+                    if (BridgeStates.TryAdd(
+                        cbi.Slot,
+                        new BridgeState()))
                     {
-                        if (BridgeStates.TryAdd(cbi.Slot, new BridgeState()))
-                        {
-                            chosen = cbi;
-                            return true;
-                        }
+                        chosen = cbi;
+                        return true;
+                    }
+                }
+
+                foreach (ConcreteBridgeInfo cbi in list)
+                {
+                    if (cbi.IsGenerated)
+                        continue;
+
+                    if (!DedicatedBridgeMatchesTarget(cbi, targetMethod))
+                        continue;
+
+                    if (!IsSlotFree(cbi.Slot))
+                        continue;
+
+                    if (BridgeStates.TryAdd(
+                        cbi.Slot,
+                        new BridgeState()))
+                    {
+                        chosen = cbi;
+                        return true;
                     }
                 }
             }
+
             return false;
+        }
+
+        private static bool DedicatedBridgeMatchesTarget(
+            ConcreteBridgeInfo bridge,
+            MethodInfo target)
+        {
+            if (bridge == null || target == null)
+                return false;
+
+            string slot = bridge.Slot != null
+                ? bridge.Slot.Name
+                : string.Empty;
+
+            Type declaring = target.DeclaringType;
+
+            switch (slot)
+            {
+                case nameof(StartSlashSlot):
+                    return declaring == typeof(NailSlash)
+                           && target.Name == "StartSlash";
+
+                case nameof(OnDisableSlot):
+                    return declaring == typeof(GameManager)
+                           && target.Name == "OnDisable";
+
+                case nameof(TakeDamageSlot):
+                    return declaring == typeof(HeroController)
+                           && target.Name == "TakeDamage";
+
+                case nameof(HitSlot):
+                    return declaring == typeof(HealthManager)
+                           && target.Name == "Hit";
+
+                case nameof(DieSlot):
+                    return declaring == typeof(HealthManager)
+                           && target.Name == "Die";
+
+                default:
+                    return false;
+            }
         }
 
         private static bool IsSlotFree(Type slot)
@@ -1692,7 +1799,7 @@ namespace Modding
                 ? ptrDelegateType.FullName
                 : "<null>"));
 
-            if (ptrDelegateType != null && TryGetFreeBridge(ptrDelegateType, out ConcreteBridgeInfo ptrCbi))
+            if (ptrDelegateType != null && TryGetFreeBridge(ptrDelegateType, targetMethod, out ConcreteBridgeInfo ptrCbi))
             {
                 Logger.APILogger.Log(
                     "AOT bridge found: " +

@@ -511,13 +511,12 @@ namespace Modding
                     DefaultAssemblyResolver resolver =
                         new DefaultAssemblyResolver();
 
-                    string directory =
+                    string referenceAssemblyDirectory =
                         Path.GetDirectoryName(referencePath);
 
-                    if (!string.IsNullOrEmpty(directory))
+                    if (!string.IsNullOrEmpty(referenceAssemblyDirectory))
                     {
-                        resolver.AddSearchDirectory(
-                            directory);
+                        resolver.AddSearchDirectory(referenceAssemblyDirectory);
                     }
 
                     CachedReferenceStream =
@@ -528,9 +527,9 @@ namespace Modding
                     ReaderParameters readerParameters =
                         new ReaderParameters
                         {
+                            InMemory = true,
                             AssemblyResolver = resolver,
-                            ReadSymbols = false,
-                            InMemory = true
+                            ReadSymbols = false
                         };
 
                     // Do not wrap CachedReferenceStream in a using block. 
@@ -723,13 +722,18 @@ namespace Modding
 
             int converted = 0;
 
+            int invalidOpcodeCount = 0;
+
             foreach (Instruction instruction
-                     in targetMethod.Body.Instructions)
+                     in modifiedCecilMethod.Body.Instructions)
             {
                 if (instruction.OpCode.Code != Code.Call)
                 {
                     continue;
                 }
+
+                if (instruction.OpCode == null)
+                    invalidOpcodeCount++;
 
                 MethodReference calledMethod =
                     instruction.Operand as MethodReference;
@@ -765,6 +769,10 @@ namespace Modding
 
                 converted++;
             }
+
+            Logger.APILogger.Log(
+            "[ILHOOK] Invalid opcode count: " +
+            invalidOpcodeCount);
 
             if (converted > 0)
             {
@@ -1165,11 +1173,21 @@ namespace Modding
                     }
                     else
                     {
-                        clone =
-                            Instruction.Create(
-                                originalInstruction.OpCode);
+                        OpCode opcode = originalInstruction.OpCode;
 
-                        clone.Operand = null;
+                        if (opcode == null)
+                        {
+                            Logger.APILogger.LogWarn(
+                                "[ILHOOK] Invalid instruction opcode at " +
+                                originalInstruction.Offset +
+                                ". Replacing with NOP.");
+
+                            clone = Instruction.Create(OpCodes.Nop);
+                        }
+                        else
+                        {
+                            clone = Instruction.Create(opcode);
+                        }
                     }
 
                     instructionMap[
