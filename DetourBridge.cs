@@ -214,20 +214,20 @@ namespace Modding
                         gmAddr = GetNativeMethodAddress(gm);
                     }
                 }
-                catch (Exception ex)
-                {
-                    Logger.APILogger.LogDebug("GameManager.Awake lookup error: " + ex.Message);
-                }
-                Logger.APILogger.Log(
-                    "GameManager.Awake GetFunctionPointer=0x" + gmFp.ToInt64().ToString("X") +
-                    " resolved=0x" + gmAddr.ToInt64().ToString("X"));
+                // catch (Exception ex)
+                // {
+                //     Logger.APILogger.LogDebug("GameManager.Awake lookup error: " + ex.Message);
+                // }
+                // Logger.APILogger.Log(
+                //     "GameManager.Awake GetFunctionPointer=0x" + gmFp.ToInt64().ToString("X") +
+                //     " resolved=0x" + gmAddr.ToInt64().ToString("X"));
 
-                Logger.APILogger.Log($"Native addresses ta=0x{ta.ToInt64():X} ra=0x{ra.ToInt64():X}");
+                // Logger.APILogger.Log($"Native addresses ta=0x{ta.ToInt64():X} ra=0x{ra.ToInt64():X}");
 
                 if (ta == ra)
                 {
-                    Logger.APILogger.LogWarn("Target and replacement share the same native address (0x" +
-                        ta.ToInt64().ToString("X") + "); Dobby disabled.");
+                    // Logger.APILogger.LogWarn("Target and replacement share the same native address (0x" +
+                    //     ta.ToInt64().ToString("X") + "); Dobby disabled.");
                     return false;
                 }
 
@@ -243,7 +243,6 @@ namespace Modding
                     DobbyHookNative(ta, ra, out tp);
                     DobbyUnhookNative(ta);
                     _dobbyAvailable = true;
-                    Logger.APILogger.Log("Dobby available.");
                 }
                 catch (DllNotFoundException)
                 {

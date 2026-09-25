@@ -55,7 +55,7 @@ namespace Modding
                         ReferenceDirectory);
 
                     Logger.APILogger.Log(
-                        "[ILREF] Created reference directory: " +
+                        "IL Reef created reference directory: " +
                         ReferenceDirectory);
                 }
 
@@ -71,7 +71,7 @@ namespace Modding
                 catch (Exception ex)
                 {
                     Logger.APILogger.LogWarn(
-                        "[ILREF] Resources.Load failed: " +
+                        "IL Ref failed to load reference asset: " +
                         ex.Message);
                 }
 
@@ -84,7 +84,7 @@ namespace Modding
                         referenceAsset.bytes);
 
                     Logger.APILogger.Log(
-                        "[ILREF] Extracted Assembly-CSharp reference: " +
+                        "IL Ref extracted Assembly-CSharp reference: " +
                         ReferencePath +
                         " (" +
                         referenceAsset.bytes.Length +
@@ -104,7 +104,7 @@ namespace Modding
                     if (info.Length > 1024)
                     {
                         Logger.APILogger.LogWarn(
-                            "[ILREF] Resources reference was not found. " +
+                            "IL Ref resources reference was not found. " +
                             "Using existing reference file: " +
                             ReferencePath);
 
@@ -118,7 +118,7 @@ namespace Modding
                     "Assembly-CSharp reference resource/file not found.";
 
                 Logger.APILogger.LogError(
-                    "[ILREF] " + error);
+                    "IL Reef " + error);
 
                 return false;
             }
@@ -129,7 +129,7 @@ namespace Modding
                     ex;
 
                 Logger.APILogger.LogError(
-                    "[ILREF] " + error);
+                    "IL Reef " + error);
 
                 return false;
             }

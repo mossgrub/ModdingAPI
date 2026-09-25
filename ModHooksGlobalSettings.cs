@@ -31,7 +31,6 @@ namespace Modding
     [PublicAPI]
     public class ModHooksGlobalSettings
     {
-        // now used to serialize and deserialize the save data. Not updated until save.
         [JsonProperty]
         internal Dictionary<string, bool> ModEnabledSettings = new Dictionary<string, bool>();
 
@@ -46,22 +45,29 @@ namespace Modding
         public bool ShortLoggingLevel;
 
         /// <summary>
+        ///     Creates a native log file in the persistent data path for logging modding native lib.
+        /// </summary>
+        public bool NativeLogging = false;
+
+        /// <summary>
         ///     Determines if the logs should have a timestamp attached to each line of logging.
         /// </summary>
         public bool IncludeTimestamps;
 
         /// <summary>
-        ///     All settings related to the the in game console
-        /// </summary>
-        
-        public bool EnablePlayMaker2DBootstrap = true;
-
-        public InGameConsoleSettings ConsoleSettings = new InGameConsoleSettings();
-
-        /// <summary>
         /// Enables the native GameObject component compatibility hooks.
         /// </summary>
-        public bool EnableComponentCompatibilityHooks = false;
+        public bool ComponentHook = false;
+
+        /// <summary>
+        /// Enables the PlayMaker2D bootstrap prefab to be loaded into the scene
+        /// </summary>
+        public bool PlayMaker2DBootstrap = true;
+
+        /// <summary>
+        ///     All settings related to the the in game console
+        /// </summary>
+        public InGameConsoleSettings ConsoleSettings = new InGameConsoleSettings();
 
         /// <summary>
         ///     Determines if Debug Console (Which displays Messages from Logger) should be shown.

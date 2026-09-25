@@ -75,7 +75,8 @@ namespace Modding
             }
             if (_ready)
             {
-                try { SetLogFileNative(Application.persistentDataPath + "/ModdingNative.log"); }
+
+                try { SetLogFileNative(Application.persistentDataPath + "/NativeLog.txt"); }
                 catch (Exception ex) { Logger.APILogger.LogWarn("Could not set native log file: " + ex.Message); }
             }
         }

@@ -58,16 +58,6 @@ namespace Modding
                     NativeCompat.RegisterAssemblyPath(asm, path);
                     NativeBridge.Register(asm, path);
 
-                    if (string.Equals(
-                        asm.GetName().Name,
-                        "Vasi",
-                        StringComparison.OrdinalIgnoreCase))
-                    {
-                        DiagnoseVasi(asm);
-                    }
-
-                    DiagnosePlayMakerAssembly();
-
                     try
                     {
                         string dir = Path.GetDirectoryName(path);
@@ -84,7 +74,7 @@ namespace Modding
                     {
                         string loc = null;
                         try { loc = asm.Location; } catch (Exception lx) { loc = "<err:" + lx.GetType().Name + ">"; }
-                        Logger.APILogger.Log("[LOCPROBE] " + (asm.GetName().Name ?? "?") +
+                        Logger.APILogger.Log("Loc Probe " + (asm.GetName().Name ?? "?") +
                             " Location='" + (loc ?? "<null>") + "' expected='" + path + "'");
                     }
                     catch { }
@@ -119,180 +109,33 @@ namespace Modding
         {
             try
             {
-                byte[] originalBytes =
-                    File.ReadAllBytes(path);
-
-                if (originalBytes == null ||
-                    originalBytes.Length == 0)
+                byte[] originalBytes = File.ReadAllBytes(path);
+                if (originalBytes == null || originalBytes.Length == 0)
                 {
-                    Logger.APILogger.LogError(
-                        "HybridCLR assembly is empty: " + path);
-
+                    Logger.APILogger.LogError("HybridCLR assembly is empty: " + path);
                     return null;
                 }
 
                 bool patched = false;
+                byte[] loadBytes = RedirectMonoModRuntimeDetourReference(originalBytes, path, out patched);
 
-                byte[] loadBytes =
-                    RedirectMonoModRuntimeDetourReference(
-                        originalBytes,
-                        path,
-                        out patched);
+                Logger.APILogger.Log(
+                    "Hybrid CLR loading " + (patched ? "patched" : "original") +
+                    " assembly via Assembly.Load(bytes): " + path);
 
-                Assembly asm = null;
-
-                if (patched)
-                {
-                    Logger.APILogger.Log(
-                        "[HYBRIDCLR] Loading patched assembly from bytes: " +
-                        path);
-
-                    asm =
-                        Assembly.Load(loadBytes);
-                }
-                else
-                {
-                    try
-                    {
-                        Logger.APILogger.Log(
-                            "[HYBRIDCLR] Loading original assembly from file: " +
-                            path);
-
-                        asm =
-                            Assembly.LoadFrom(path);
-                    }
-                    catch (Exception loadFromException)
-                    {
-                        Logger.APILogger.LogWarn(
-                            "[HYBRIDCLR] Assembly.LoadFrom failed for " +
-                            path +
-                            ": " +
-                            loadFromException.Message);
-
-                        Logger.APILogger.Log(
-                            "[HYBRIDCLR] Falling back to Assembly.Load(bytes): " +
-                            path);
-
-                        asm =
-                            Assembly.Load(loadBytes);
-                    }
-                }
+                Assembly asm = Assembly.Load(loadBytes);
 
                 if (asm != null)
                 {
-                    NativeCompat.AssemblyLocations[asm] =
-                        path;
+                    NativeCompat.AssemblyLocations[asm] = path;
                 }
 
                 return asm;
             }
             catch (Exception ex)
             {
-                Logger.APILogger.LogError(
-                    "HybridCLR failed to load " +
-                    path +
-                    ": " +
-                    ex);
-
+                Logger.APILogger.LogError("HybridCLR failed to load " + path + ": " + ex);
                 return null;
-            }
-        }
-
-        private static void DiagnoseVasi(Assembly asm)
-        {
-            if (asm == null)
-                return;
-
-            if (!string.Equals(
-                asm.GetName().Name,
-                "Vasi",
-                StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
-            Logger.APILogger.Log(
-                "[VASI] Assembly: " +
-                asm.FullName);
-
-            try
-            {
-                Type fsmUtil =
-                    asm.GetType(
-                        "Vasi.FsmUtil",
-                        false);
-
-                Logger.APILogger.Log(
-                    "[VASI] Vasi.FsmUtil: " +
-                    (fsmUtil != null
-                        ? "FOUND"
-                        : "MISSING"));
-
-                if (fsmUtil == null)
-                {
-                    foreach (AssemblyName reference
-                             in asm.GetReferencedAssemblies())
-                    {
-                        Logger.APILogger.Log(
-                            "[VASI] Reference: " +
-                            reference.FullName);
-                    }
-                }
-            }
-            catch (ReflectionTypeLoadException ex)
-            {
-                Logger.APILogger.LogError(
-                    "[VASI] ReflectionTypeLoadException");
-
-                foreach (Exception loaderEx
-                         in ex.LoaderExceptions)
-                {
-                    Logger.APILogger.LogError(
-                        "[VASI] " +
-                        loaderEx);
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.APILogger.LogError(
-                    "[VASI] Diagnosis failed: " +
-                    ex);
-            }
-        }
-
-        private static void DiagnosePlayMakerAssembly()
-        {
-            try
-            {
-                Assembly[] assemblies =
-                    AppDomain.CurrentDomain.GetAssemblies();
-
-                foreach (Assembly assembly in assemblies)
-                {
-                    string name =
-                        assembly.GetName().Name;
-
-                    if (string.Equals(
-                            name,
-                            "PlayMaker",
-                            StringComparison.OrdinalIgnoreCase))
-                    {
-                        Logger.APILogger.Log(
-                            "[VASI] PlayMaker assembly found: " +
-                            assembly.FullName);
-
-                        return;
-                    }
-                }
-
-                Logger.APILogger.LogWarn(
-                    "[VASI] PlayMaker assembly NOT found.");
-            }
-            catch (Exception ex)
-            {
-                Logger.APILogger.LogError(
-                    "[VASI] PlayMaker diagnostic failed: " +
-                    ex);
             }
         }
 
@@ -346,7 +189,7 @@ namespace Modding
                     if (targetReference == null)
                     {
                         Logger.APILogger.Log(
-                            "[ILREDIRECT] MonoMod.RuntimeDetour reference not found: " +
+                            "MonoMod.RuntimeDetour reference not found: " +
                             assemblyPath);
 
                         return assemblyBytes;
@@ -359,17 +202,17 @@ namespace Modding
                         apiAssembly.GetName();
 
                     Logger.APILogger.Log(
-                        "[ILREDIRECT] Found MonoMod.RuntimeDetour reference in: " +
+                        "Found MonoMod.RuntimeDetour reference in: " +
                         assemblyPath);
 
                     Logger.APILogger.Log(
-                        "[ILREDIRECT] Original reference: " +
+                        "IL Redirect Original reference: " +
                         targetReference.Name +
                         ", Version=" +
                         targetReference.Version);
 
                     Logger.APILogger.Log(
-                        "[ILREDIRECT] Redirect target: " +
+                        "IL Redirect Target: " +
                         apiName.Name +
                         ", Version=" +
                         apiName.Version);
@@ -395,7 +238,7 @@ namespace Modding
                             rewrittenBytes.Length == 0)
                         {
                             Logger.APILogger.LogError(
-                                "[ILREDIRECT] Cecil produced an empty rewritten assembly.");
+                                "Cecil produced an empty rewritten assembly.");
 
                             return assemblyBytes;
                         }
@@ -403,7 +246,7 @@ namespace Modding
                         patched = true;
 
                         Logger.APILogger.Log(
-                            "[ILREDIRECT] Assembly reference rewritten successfully: " +
+                            "Assembly reference rewritten successfully: " +
                             assemblyPath);
 
                         return rewrittenBytes;
@@ -413,7 +256,7 @@ namespace Modding
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
-                    "[ILREDIRECT] Failed to rewrite MonoMod.RuntimeDetour reference: " +
+                    "Failed to rewrite MonoMod.RuntimeDetour reference: " +
                     ex);
 
                 patched = false;

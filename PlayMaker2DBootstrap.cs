@@ -37,12 +37,12 @@ namespace Modding
                 EnsureCurrentScene();
 
                 Logger.APILogger.Log(
-                    "[PLAYMAKER2D] Bootstrap installed.");
+                    "PlayMaker2D bootstrap installed");
             }
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
-                    "[PLAYMAKER2D] Bootstrap installation failed: " +
+                    "PlayMaker2D bootstrap installation failed: " +
                     ex);
 
                 try
@@ -75,7 +75,7 @@ namespace Modding
             _installed = false;
 
             Logger.APILogger.Log(
-                "[PLAYMAKER2D] Bootstrap uninstalled.");
+                "PlayMaker2D bootstrap uninstalled");
         }
 
         private static void OnSceneLoaded(
@@ -89,7 +89,7 @@ namespace Modding
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
-                    "[PLAYMAKER2D] Scene bootstrap failed: " +
+                    "PlayMaker2D scene bootstrap failed: " +
                     ex);
             }
         }
@@ -104,7 +104,7 @@ namespace Modding
                 if (!scene.IsValid())
                 {
                     Logger.APILogger.LogWarn(
-                        "[PLAYMAKER2D] Active scene is invalid.");
+                        "PlayMaker2D active scene is invalid");
 
                     return;
                 }
@@ -114,7 +114,7 @@ namespace Modding
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
-                    "[PLAYMAKER2D] Current scene bootstrap failed: " +
+                    "PlayMaker2D current scene bootstrap failed: " +
                     ex);
             }
         }
@@ -131,7 +131,7 @@ namespace Modding
             if (HasExistingInstance(scene))
             {
                 Logger.APILogger.LogFine(
-                    "[PLAYMAKER2D] Existing instance found in scene: " +
+                    "PlayMaker2D existing instance found in scene: " +
                     scene.name);
 
                 return;
@@ -143,8 +143,8 @@ namespace Modding
             if (prefab == null)
             {
                 Logger.APILogger.LogWarn(
-                    "[PLAYMAKER2D] PlayMaker Unity 2D prefab not found. " +
-                    "Bootstrap will not modify this scene.");
+                    "PlayMaker2D prefab not found. " +
+                    "Bootstrap will not modify this scene");
 
                 return;
             }
@@ -158,7 +158,7 @@ namespace Modding
                 if (instance == null)
                 {
                     Logger.APILogger.LogWarn(
-                        "[PLAYMAKER2D] Instantiate returned null.");
+                        "PlayMaker2D Instantiate returned null");
 
                     return;
                 }
@@ -171,14 +171,14 @@ namespace Modding
                     scene);
 
                 Logger.APILogger.Log(
-                    "[PLAYMAKER2D] Instantiated PlayMaker Unity 2D " +
+                    "PlayMaker2D instantiated PlayMaker Unity 2D " +
                     "in scene: " +
                     scene.name);
             }
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
-                    "[PLAYMAKER2D] Failed to instantiate PlayMaker Unity 2D: " +
+                    "PlayMaker2D failed to instantiate PlayMaker Unity 2D: " +
                     ex);
             }
         }
@@ -194,20 +194,20 @@ namespace Modding
                 if (prefab != null)
                 {
                     Logger.APILogger.Log(
-                        "[PLAYMAKER2D] Prefab loaded from Resources: " +
+                        "PlayMaker2D prefab loaded from resources: " +
                         PrefabResourcePath);
 
                     return prefab;
                 }
 
                 Logger.APILogger.LogWarn(
-                    "[PLAYMAKER2D] Resources.Load returned null for: " +
+                    "PlayMaker2D resources.Load returned null for: " +
                     PrefabResourcePath);
             }
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
-                    "[PLAYMAKER2D] Failed to load prefab: " +
+                    "PlayMaker2D failed to load prefab: " +
                     ex);
             }
 
@@ -258,7 +258,7 @@ namespace Modding
             catch (Exception ex)
             {
                 Logger.APILogger.LogWarn(
-                    "[PLAYMAKER2D] Existing-instance check failed: " +
+                    "PlayMaker2D existing-instance check failed: " +
                     ex.Message);
             }
 

@@ -105,7 +105,7 @@ namespace Modding
             }
 
             Logger.APILogger.Log(
-                "[ILHOOK] Begin: " +
+                "IL Hook begin: " +
                 methodInfo.DeclaringType?.FullName +
                 "." +
                 methodInfo.Name);
@@ -118,7 +118,7 @@ namespace Modding
                         "An IL hook is already active for this method.";
 
                     Logger.APILogger.LogWarn(
-                        "[ILHOOK] Already active: " +
+                        "IL Hook already active: " +
                         methodInfo.Name);
 
                     return false;
@@ -157,13 +157,13 @@ namespace Modding
                         delegateTypeError;
 
                     Logger.APILogger.LogError(
-                        "[ILHOOK] " + error);
+                        "IL Hook " + error);
 
                     return false;
                 }
 
                 Logger.APILogger.Log(
-                    "[ILHOOK] Managed IL orig delegate: " +
+                    "IL Hook managed IL orig delegate: " +
                     origDelegateType.FullName);
 
                 AssemblyDefinition referenceAssembly =
@@ -191,7 +191,7 @@ namespace Modding
                 }
 
                 Logger.APILogger.Log(
-                    "[ILHOOK] Extracted: " +
+                    "IL Hook extracted: " +
                     cecilMethod.FullName);
 
                 NormalizeInstanceCallsForILMatchers(
@@ -208,7 +208,7 @@ namespace Modding
                 }
 
                 Logger.APILogger.Log(
-                    "[ILHOOK] Manipulator completed.");
+                    "IL Hook manipulator completed.");
 
                 byte[] ghostDll =
                     CreateGhostDll(
@@ -241,7 +241,7 @@ namespace Modding
                 }
 
                 Logger.APILogger.Log(
-                    "[ILHOOK] Ghost method loaded: " +
+                    "IL Hook ghost method loaded: " +
                     ghost.GhostMethod.DeclaringType?.FullName +
                     "." +
                     ghost.GhostMethod.Name);
@@ -265,7 +265,7 @@ namespace Modding
                 }
 
                 Logger.APILogger.Log(
-                    "[ILHOOK] Replacement delegate created: " +
+                    "IL Hook replacement delegate created: " +
                     replacement.GetType().FullName);
 
                 if (!DetourBridge.TryCreateOrigDetour(
@@ -279,7 +279,7 @@ namespace Modding
                         detourError;
 
                     Logger.APILogger.LogError(
-                        "[ILHOOK] " + error);
+                        "IL Hook " + error);
 
                     return false;
                 }
@@ -309,7 +309,7 @@ namespace Modding
                 }
 
                 Logger.APILogger.Log(
-                    "[ILHOOK] Installed successfully: " +
+                    "IL Hook installed successfully: " +
                     methodInfo.DeclaringType?.FullName +
                     "." +
                     methodInfo.Name);
@@ -477,7 +477,7 @@ namespace Modding
                             out string error))
                     {
                         Logger.APILogger.LogError(
-                            "[ILREF] " + error);
+                            "IL Reef " + error);
 
                         return null;
                     }
@@ -486,14 +486,14 @@ namespace Modding
                         !File.Exists(referencePath))
                     {
                         Logger.APILogger.LogError(
-                            "[ILREF] Reference file does not exist: " +
+                            "IL Reef reference file does not exist: " +
                             referencePath);
 
                         return null;
                     }
 
                     Logger.APILogger.Log(
-                        "[ILREF] Reading Cecil reference assembly: " +
+                        "IL Reef reading Cecil reference assembly: " +
                         referencePath);
 
                     byte[] bytes =
@@ -503,7 +503,7 @@ namespace Modding
                         bytes.Length == 0)
                     {
                         Logger.APILogger.LogError(
-                            "[ILREF] Reference assembly is empty.");
+                            "IL Reef reference assembly is empty.");
 
                         return null;
                     }
@@ -542,7 +542,7 @@ namespace Modding
                     if (CachedReferenceAssembly == null)
                     {
                         Logger.APILogger.LogError(
-                            "[ILREF] Cecil returned null AssemblyDefinition.");
+                            "IL Reef Cecil returned null AssemblyDefinition.");
 
                         CachedReferenceStream.Dispose();
                         CachedReferenceStream = null;
@@ -551,7 +551,7 @@ namespace Modding
                     }
 
                     Logger.APILogger.Log(
-                        "[ILREF] Cecil loaded reference: " +
+                        "IL Reef Cecil loaded reference: " +
                         CachedReferenceAssembly.Name.FullName);
 
                     return CachedReferenceAssembly;
@@ -559,7 +559,7 @@ namespace Modding
                 catch (Exception ex)
                 {
                     Logger.APILogger.LogError(
-                        "[ILREF] Failed to load Cecil reference: " +
+                        "IL Reef failed to load Cecil reference: " +
                         ex);
 
                     return null;
@@ -576,7 +576,7 @@ namespace Modding
                 if (runtimeMethod == null)
                 {
                     Logger.APILogger.LogWarn(
-                        "[ILREF] Runtime method is null.");
+                        "IL Reef runtime method is null.");
 
                     return null;
                 }
@@ -584,7 +584,7 @@ namespace Modding
                 if (referenceAssembly == null)
                 {
                     Logger.APILogger.LogWarn(
-                        "[ILREF] Cecil reference assembly is null.");
+                        "IL Reef Cecil reference assembly is null.");
 
                     return null;
                 }
@@ -595,7 +595,7 @@ namespace Modding
                 if (declaringType == null)
                 {
                     Logger.APILogger.LogWarn(
-                        "[ILREF] Runtime declaring type is null.");
+                        "IL Reef runtime declaring type is null.");
 
                     return null;
                 }
@@ -605,7 +605,7 @@ namespace Modding
                         .Replace('+', '/');
 
                 Logger.APILogger.Log(
-                    "[ILREF] Searching reference type: " +
+                    "IL Reef searching reference type: " +
                     typeName);
 
                 TypeDefinition type =
@@ -615,7 +615,7 @@ namespace Modding
                 if (type == null)
                 {
                     Logger.APILogger.LogWarn(
-                        "[ILREF] Reference type not found: " +
+                        "IL Reef reference type not found: " +
                         typeName);
 
                     return null;
@@ -679,7 +679,7 @@ namespace Modding
                 if (method == null)
                 {
                     Logger.APILogger.LogWarn(
-                        "[ILREF] Reference method not found: " +
+                        "IL Reef reference method not found: " +
                         declaringType.FullName +
                         "." +
                         runtimeMethod.Name);
@@ -688,7 +688,7 @@ namespace Modding
                 }
 
                 Logger.APILogger.Log(
-                    "[ILREF] Reference method resolved: " +
+                    "IL Reef reference method resolved: " +
                     method.FullName);
 
                 return method;
@@ -696,7 +696,7 @@ namespace Modding
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
-                    "[ILREF] Failed to extract method with Cecil: " +
+                    "IL Reef failed to extract method with Cecil: " +
                     ex);
 
                 return null;
@@ -771,13 +771,13 @@ namespace Modding
             }
 
             Logger.APILogger.Log(
-            "[ILHOOK] Invalid opcode count: " +
+            "IL Hook invalid opcode count: " +
             invalidOpcodeCount);
 
             if (converted > 0)
             {
                 Logger.APILogger.Log(
-                    "[ILHOOK] Normalized " +
+                    "IL Hook normalized " +
                     converted +
                     " same-type instance CALL instruction(s) to CALLVIRT.");
             }
@@ -799,16 +799,16 @@ namespace Modding
                     RuntimeILReferenceBag.Instance;
 
                 Logger.APILogger.Log(
-                    "[ILHOOK] ReferenceBag: " +
+                    "IL Hook ReferenceBag: " +
                     context.ReferenceBag.GetType().FullName);
 
                 Logger.APILogger.Log(
-                    "Calling ILContext.Manipulator.");
+                    "IL Hook calling ILContext.Manipulator.");
 
                 handler(context);
 
                 Logger.APILogger.Log(
-                    "ILContext.Manipulator completed.");
+                    "IL Hook ILContext.Manipulator completed.");
 
                 return true;
             }
@@ -831,7 +831,7 @@ namespace Modding
                     catch (Exception disposeEx)
                     {
                         Logger.APILogger.LogWarn(
-                            "[ILHOOK] ILContext dispose warning: " +
+                            "IL Hook ILContext dispose warning: " +
                             disposeEx.Message);
                     }
                 }
@@ -1004,7 +1004,7 @@ namespace Modding
                     if (param.ParameterType.IsByRef)
                     {
                         Logger.APILogger.LogWarn(
-                            "[ILHOOK] By-ref parameters are not supported.");
+                            "IL Hook by-ref parameters are not supported.");
 
                         return null;
                     }
@@ -1178,7 +1178,7 @@ namespace Modding
                         if (opcode == null)
                         {
                             Logger.APILogger.LogWarn(
-                                "[ILHOOK] Invalid instruction opcode at " +
+                                "IL Hook invalid instruction opcode at " +
                                 originalInstruction.Offset +
                                 ". Replacing with NOP.");
 
@@ -1276,7 +1276,7 @@ namespace Modding
                         stream.ToArray();
 
                     Logger.APILogger.Log(
-                        "[ILHOOK] Ghost DLL created: " +
+                        "IL Hook ghost DLL created: " +
                         result.Length +
                         " bytes.");
 
@@ -1286,7 +1286,7 @@ namespace Modding
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
-                    "[ILHOOK] Failed to create ghost DLL: " +
+                    "IL Hook failed to create ghost DLL: " +
                     ex);
 
                 return null;
@@ -1311,7 +1311,7 @@ namespace Modding
                 if (ghostType == null)
                 {
                     Logger.APILogger.LogError(
-                        "[ILHOOK] Ghost type not found: " +
+                        "IL Hook ghost type not found: " +
                         ghostTypeName);
 
                     return null;
@@ -1325,7 +1325,7 @@ namespace Modding
                 if (delegateType == null)
                 {
                     Logger.APILogger.LogError(
-                        "[ILHOOK] Ghost delegate type not found: " +
+                        "IL Hook ghost delegate type not found: " +
                         replacementDelegateTypeName);
 
                     return null;
@@ -1340,7 +1340,7 @@ namespace Modding
                 if (method == null)
                 {
                     Logger.APILogger.LogError(
-                        "[ILHOOK] Ghost Invoke method not found.");
+                        "IL Hook ghost Invoke method not found.");
 
                     return null;
                 }
@@ -1355,7 +1355,7 @@ namespace Modding
             catch (Exception ex)
             {
                 Logger.APILogger.LogError(
-                    "[ILHOOK] Failed to load ghost method: " +
+                    "IL Hook failed to load ghost method: " +
                     ex);
 
                 return null;

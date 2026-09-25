@@ -33,24 +33,19 @@ namespace Modding
                 return;
             }
 
-            NativeBridge.EnsureReady();
+            if (ModHooks.GlobalSettings.NativeLogging)
+            {
+                NativeBridge.EnsureReady();
+            }
 
             InstallHookEndpointRedirect();
 
             NativeBridge.EnsureLocationHook();
 
-            if (ModHooks.GlobalSettings.EnableComponentCompatibilityHooks)
+            if (ModHooks.GlobalSettings.ComponentHook)
             {
-                Logger.APILogger.Log(
-                    "Component compatibility hooks enabled by ModdingApi.GlobalSettings.json.");
-
                 NativeBridge.EnsureAddComponentHook();
                 NativeBridge.EnsureGameObjectCtorHook();
-            }
-            else
-            {
-                Logger.APILogger.Log(
-                    "Component compatibility hooks disabled by ModdingApi.GlobalSettings.json.");
             }
 
             NativeBridge.EnsureResourceHooks();
