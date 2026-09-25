@@ -371,18 +371,30 @@ namespace Modding
 
                     patched = true;
 
-                    using (MemoryStream output =
-                           new MemoryStream())
+                    string fileName = Path.GetFileNameWithoutExtension(path);
+
+                    bool isMMHOOK =
+                        fileName.StartsWith(
+                            "MMHOOK_",
+                            StringComparison.OrdinalIgnoreCase);
+
+                    byte[] assemblyBytes = File.ReadAllBytes(path);
+
+                    if (isMMHOOK)
                     {
-                        assembly.Write(output);
+                        byte[] rewrittenBytes;
 
-                        byte[] result =
-                            output.ToArray();
+                        if (TryRewriteMonoModRuntimeDetourReference(
+                                path,
+                                assemblyBytes,
+                                out rewrittenBytes))
+                        {
+                            assemblyBytes = rewrittenBytes;
 
-                        Logger.APILogger.Log(
-                            "[ILREDIRECT] Assembly reference rewritten successfully.");
-
-                        return result;
+                            Logger.APILogger.Log(
+                                "[ILREDIRECT] MMHOOK redirected to Assembly-CSharp: " +
+                                fileName);
+                        }
                     }
                 }
             }

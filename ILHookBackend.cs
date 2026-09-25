@@ -778,13 +778,21 @@ namespace Modding
         }
 
         private static bool ModifyILWithMonoMod(
-            MethodDefinition method,
-            MonoMod.Cil.ILContext.Manipulator handler)
+    MethodDefinition method,
+    MonoMod.Cil.ILContext.Manipulator handler)
         {
+            ILContext context = null;
+
             try
             {
-                ILContext context =
-                    new ILContext(method);
+                context = new ILContext(method);
+
+                context.ReferenceBag =
+                    RuntimeILReferenceBag.Instance;
+
+                Logger.APILogger.Log(
+                    "[ILHOOK] ReferenceBag: " +
+                    context.ReferenceBag.GetType().FullName);
 
                 Logger.APILogger.Log(
                     "Calling ILContext.Manipulator.");
@@ -803,6 +811,22 @@ namespace Modding
                     ex);
 
                 return false;
+            }
+            finally
+            {
+                if (context != null)
+                {
+                    try
+                    {
+                        context.Dispose();
+                    }
+                    catch (Exception disposeEx)
+                    {
+                        Logger.APILogger.LogWarn(
+                            "[ILHOOK] ILContext dispose warning: " +
+                            disposeEx.Message);
+                    }
+                }
             }
         }
 
