@@ -725,7 +725,7 @@ namespace Modding
             int invalidOpcodeCount = 0;
 
             foreach (Instruction instruction
-                     in modifiedCecilMethod.Body.Instructions)
+                in targetMethod.Body.Instructions)
             {
                 if (instruction.OpCode.Code != Code.Call)
                 {

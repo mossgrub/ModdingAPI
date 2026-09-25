@@ -297,9 +297,9 @@ namespace Modding
         }
 
         private static byte[] RedirectMonoModRuntimeDetourReference(
-    byte[] assemblyBytes,
-    string assemblyPath,
-    out bool patched)
+            byte[] assemblyBytes,
+            string assemblyPath,
+            out bool patched)
         {
             patched = false;
 
@@ -314,9 +314,17 @@ namespace Modding
                 using (MemoryStream input =
                        new MemoryStream(assemblyBytes))
                 {
+                    Mono.Cecil.ReaderParameters readerParameters =
+                        new Mono.Cecil.ReaderParameters
+                        {
+                            InMemory = true,
+                            ReadSymbols = false
+                        };
+
                     Mono.Cecil.AssemblyDefinition assembly =
                         Mono.Cecil.AssemblyDefinition.ReadAssembly(
-                            input);
+                            input,
+                            readerParameters);
 
                     Mono.Cecil.AssemblyNameReference targetReference =
                         null;
@@ -337,6 +345,10 @@ namespace Modding
 
                     if (targetReference == null)
                     {
+                        Logger.APILogger.Log(
+                            "[ILREDIRECT] MonoMod.RuntimeDetour reference not found: " +
+                            assemblyPath);
+
                         return assemblyBytes;
                     }
 
@@ -368,32 +380,33 @@ namespace Modding
                     targetReference.Version =
                         apiName.Version;
 
-                    patched = true;
+                    targetReference.PublicKeyToken =
+                        apiName.GetPublicKeyToken();
 
-                    string fileName = Path.GetFileNameWithoutExtension(path);
-
-                    bool isMMHOOK =
-                        fileName.StartsWith(
-                            "MMHOOK_",
-                            StringComparison.OrdinalIgnoreCase);
-
-                    byte[] assemblyBytes = File.ReadAllBytes(path);
-
-                    if (isMMHOOK)
+                    using (MemoryStream output =
+                           new MemoryStream())
                     {
-                        byte[] rewrittenBytes;
+                        assembly.Write(output);
 
-                        if (TryRewriteMonoModRuntimeDetourReference(
-                                path,
-                                assemblyBytes,
-                                out rewrittenBytes))
+                        byte[] rewrittenBytes =
+                            output.ToArray();
+
+                        if (rewrittenBytes == null ||
+                            rewrittenBytes.Length == 0)
                         {
-                            assemblyBytes = rewrittenBytes;
+                            Logger.APILogger.LogError(
+                                "[ILREDIRECT] Cecil produced an empty rewritten assembly.");
 
-                            Logger.APILogger.Log(
-                                "[ILREDIRECT] MMHOOK redirected to Assembly-CSharp: " +
-                                fileName);
+                            return assemblyBytes;
                         }
+
+                        patched = true;
+
+                        Logger.APILogger.Log(
+                            "[ILREDIRECT] Assembly reference rewritten successfully: " +
+                            assemblyPath);
+
+                        return rewrittenBytes;
                     }
                 }
             }
