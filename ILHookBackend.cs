@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.Serialization;
 
 using UnityEngine;
 
@@ -805,6 +806,19 @@ namespace Modding
             }
         }
 
+        private static ModuleParameters CreateIL2CPPCompatibleModuleParameters()
+        {
+            ModuleParameters parameters =
+                (ModuleParameters)FormatterServices.GetUninitializedObject(
+                    typeof(ModuleParameters));
+
+            parameters.Kind = ModuleKind.Dll;
+            parameters.Runtime = TargetRuntime.Net_4_0;
+            parameters.Architecture = TargetArchitecture.I386;
+
+            return parameters;
+        }
+
         private sealed class GhostInfo
         {
             public Assembly GhostAssembly;
@@ -831,11 +845,14 @@ namespace Modding
                         Guid.NewGuid().ToString("N"),
                         new Version(1, 0, 0, 0));
 
+                ModuleParameters moduleParameters =
+                    CreateIL2CPPCompatibleModuleParameters();
+
                 AssemblyDefinition assembly =
                     AssemblyDefinition.CreateAssembly(
                         assemblyName,
                         "ILHookGhostModule",
-                        ModuleKind.Dll);
+                        moduleParameters);
 
                 ModuleDefinition module =
                     assembly.MainModule;
