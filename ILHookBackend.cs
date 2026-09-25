@@ -193,6 +193,9 @@ namespace Modding
                     "[ILHOOK] Extracted: " +
                     cecilMethod.FullName);
 
+                NormalizeInstanceCallsForILMatchers(
+                    cecilMethod);
+
                 if (!ModifyILWithMonoMod(
                         cecilMethod,
                         manipulator))
@@ -700,6 +703,79 @@ namespace Modding
             }
         }
 
+        private static int NormalizeInstanceCallsForILMatchers(
+            MethodDefinition targetMethod)
+        {
+            if (targetMethod == null ||
+                targetMethod.Body == null)
+            {
+                return 0;
+            }
+
+            TypeDefinition declaringType =
+                targetMethod.DeclaringType;
+
+            if (declaringType == null)
+            {
+                return 0;
+            }
+
+            int converted = 0;
+
+            foreach (Instruction instruction
+                     in targetMethod.Body.Instructions)
+            {
+                if (instruction.OpCode.Code != Code.Call)
+                {
+                    continue;
+                }
+
+                MethodReference calledMethod =
+                    instruction.Operand as MethodReference;
+
+                if (calledMethod == null)
+                {
+                    continue;
+                }
+
+                // Constructors must remain CALL.
+                if (calledMethod.Name == ".ctor" ||
+                    calledMethod.Name == ".cctor")
+                {
+                    continue;
+                }
+
+                // Static methods must remain CALL.
+                if (calledMethod.HasThis == false)
+                {
+                    continue;
+                }
+
+                // Only normalize calls to methods belonging to the
+                // same declaring type as the target method.
+                if (calledMethod.DeclaringType.FullName !=
+                    declaringType.FullName)
+                {
+                    continue;
+                }
+
+                instruction.OpCode =
+                    OpCodes.Callvirt;
+
+                converted++;
+            }
+
+            if (converted > 0)
+            {
+                Logger.APILogger.Log(
+                    "[ILHOOK] Normalized " +
+                    converted +
+                    " same-type instance CALL instruction(s) to CALLVIRT.");
+            }
+
+            return converted;
+        }
+
         private static bool ModifyILWithMonoMod(
             MethodDefinition method,
             MonoMod.Cil.ILContext.Manipulator handler)
@@ -735,7 +811,6 @@ namespace Modding
             public MethodInfo GhostMethod;
             public Type ReplacementDelegateType;
         }
-
 
 
         private static byte[] CreateGhostDll(

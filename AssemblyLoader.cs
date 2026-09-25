@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using UnityEngine;
 
@@ -60,7 +61,7 @@ namespace Modding
                     if (string.Equals(
                         asm.GetName().Name,
                         "Vasi",
-                        StringComparison.Ordinal))
+                        StringComparison.OrdinalIgnoreCase))
                     {
                         DiagnoseVasi(asm);
                     }
@@ -197,7 +198,8 @@ namespace Modding
             }
         }
 
-        private static void DiagnoseVasi(Assembly assembly)
+        private static void DiagnoseVasi(
+            Assembly assembly)
         {
             try
             {
@@ -210,58 +212,46 @@ namespace Modding
                 }
 
                 Logger.APILogger.Log(
-                    "[VASI] FullName: " +
+                    "[VASI] Assembly loaded: " +
                     assembly.FullName);
 
-                Logger.APILogger.Log(
-                    "[VASI] IsDynamic: " +
-                    assembly.IsDynamic);
+                Type fsmUtil =
+                    assembly.GetType(
+                        "Vasi.FsmUtil",
+                        false);
 
                 Logger.APILogger.Log(
-                    "[VASI] FsmUtil lookup begin.");
+                    "[VASI] FsmUtil: " +
+                    (fsmUtil != null
+                        ? "FOUND"
+                        : "MISSING"));
 
-                try
+                AssemblyName[] references =
+                    assembly.GetReferencedAssemblies();
+
+                foreach (AssemblyName reference
+                         in references)
                 {
-                    Type fsmUtil =
-                        assembly.GetType(
-                            "Vasi.FsmUtil",
-                            false);
-
                     Logger.APILogger.Log(
-                        "[VASI] FsmUtil lookup: " +
-                        (fsmUtil != null
-                            ? "FOUND"
-                            : "MISSING"));
-                }
-                catch (Exception ex)
-                {
-                    Logger.APILogger.LogError(
-                        "[VASI] FsmUtil lookup exception: " +
-                        ex);
+                        "[VASI] Reference: " +
+                        reference.FullName);
                 }
 
-                try
-                {
-                    AssemblyName[] references =
-                        assembly.GetReferencedAssemblies();
-
-                    foreach (AssemblyName reference
-                             in references)
-                    {
-                        Logger.APILogger.Log(
-                            "[VASI] Reference: " +
-                            reference.FullName);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Logger.APILogger.LogWarn(
-                        "[VASI] Could not enumerate references: " +
-                        ex.Message);
-                }
+                Assembly playMaker =
+                    AppDomain.CurrentDomain
+                        .GetAssemblies()
+                        .FirstOrDefault(
+                            a =>
+                                string.Equals(
+                                    a.GetName().Name,
+                                    "PlayMaker",
+                                    StringComparison.OrdinalIgnoreCase));
 
                 Logger.APILogger.Log(
-                    "[VASI] Dependency diagnostic finished.");
+                    "[VASI] PlayMaker loaded: " +
+                    (playMaker != null
+                        ? playMaker.FullName
+                        : "<NOT FOUND>"));
             }
             catch (Exception ex)
             {
