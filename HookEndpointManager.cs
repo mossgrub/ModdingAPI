@@ -147,7 +147,9 @@ namespace MonoMod.RuntimeDetour.HookGen
             }
         }
 
-        public static void Modify(MethodBase method, Delegate callback)
+        public static void Modify(
+            MethodBase method,
+            Delegate callback)
         {
             if (method == null)
                 throw new ArgumentNullException(nameof(method));
@@ -159,20 +161,12 @@ namespace MonoMod.RuntimeDetour.HookGen
                 callback as MonoMod.Cil.ILContext.Manipulator;
 
             if (manipulator == null)
-            {
                 throw new ArgumentException(
-                    "IL callback must be an ILContext.Manipulator.",
+                    "IL callback is not a MonoMod.Cil.ILContext.Manipulator.",
                     nameof(callback));
-            }
 
             Tuple<MethodBase, Delegate> key =
                 Tuple.Create(method, callback);
-
-            if (ILHooks.ContainsKey(key))
-            {
-                throw new ArgumentException(
-                    "Delegate has already been applied to this method as an IL hook!");
-            }
 
             MonoMod.RuntimeDetour.ILHook hook =
                 new MonoMod.RuntimeDetour.ILHook(
@@ -184,17 +178,19 @@ namespace MonoMod.RuntimeDetour.HookGen
                 hook.Dispose();
 
                 throw new ArgumentException(
-                    "Delegate has already been applied to this method as an IL hook!");
+                    "IL hook has already been applied to this method with this callback.");
             }
 
             Logger.APILogger.Log(
-                "HookEndpointManager.Modify applied IL hook: " +
+                "IL.modify registered: " +
                 method.DeclaringType?.FullName +
                 "." +
                 method.Name);
         }
 
-        public static void Unmodify(MethodBase method, Delegate callback)
+        public static void Unmodify(
+            MethodBase method,
+            Delegate callback)
         {
             if (method == null)
                 throw new ArgumentNullException(nameof(method));
@@ -209,27 +205,28 @@ namespace MonoMod.RuntimeDetour.HookGen
 
             if (ILHooks.TryRemove(key, out hook))
             {
-                try
-                {
-                    hook.Dispose();
-                }
-                catch (Exception ex)
-                {
-                    Logger.APILogger.LogWarn(
-                        "Failed to dispose IL hook: " +
-                        ex.Message);
-                }
+                hook.Dispose();
+
+                Logger.APILogger.Log(
+                    "IL.modify removed: " +
+                    method.DeclaringType?.FullName +
+                    "." +
+                    method.Name);
             }
         }
 
-        public static void Modify<T>(MethodBase method, Delegate callback)
-        where T : class
+        public static void Modify<T>(
+            MethodBase method,
+            Delegate callback)
+            where T : Delegate
         {
             Modify(method, callback);
         }
 
-        public static void Unmodify<T>(MethodBase method, Delegate callback)
-        where T : class
+        public static void Unmodify<T>(
+            MethodBase method,
+            Delegate callback)
+            where T : Delegate
         {
             Unmodify(method, callback);
         }
