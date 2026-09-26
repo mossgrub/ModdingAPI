@@ -14,19 +14,6 @@ namespace Modding
         private static extern void SetLogFileNative(
             [MarshalAs(UnmanagedType.LPStr)] string path);
 
-        [DllImport("modding_native", EntryPoint = "mod2_install_location_hook")]
-        private static extern int InstallLocationHook(IntPtr getLocationAddress);
-
-        [DllImport("modding_native", EntryPoint = "mod2_location_hook_active")]
-        private static extern int LocationHookActive();
-
-        [DllImport("modding_native", EntryPoint = "mod2_register_assembly_path")]
-        private static extern void RegisterAssemblyPath(
-            [MarshalAs(UnmanagedType.IUnknown)] object assemblyObject,
-            [MarshalAs(UnmanagedType.LPStr)] string name,
-            [MarshalAs(UnmanagedType.LPStr)] string path,
-            IntPtr assemblyNative);
-
         [DllImport("modding_native", EntryPoint = "mod2_invoke_orig")]
         private static extern IntPtr InvokeOrigNative(IntPtr methodInfo, IntPtr trampoline, IntPtr obj,
             IntPtr args, IntPtr exc);
@@ -37,16 +24,6 @@ namespace Modding
         [DllImport("modding_native", EntryPoint = "mod2_install_addcomponent_hook")]
         private static extern int InstallAddComponentHook(IntPtr addComponentMethodPtr, IntPtr getComponentMethodInfo, IntPtr getComponentFuncPtr);
 
-        [DllImport("modding_native", EntryPoint = "mod2_set_location_resolver")]
-        private static extern void SetLocationResolverNative(IntPtr resolverMethodInfo);
-
-        [DllImport("modding_native", EntryPoint = "mod2_set_location_resolver_object")]
-        private static extern void SetLocationResolverObjectNative(IntPtr resolverMethodInfo);
-
-        [DllImport("modding_native", EntryPoint = "mod2_install_resource_hooks")]
-        private static extern int InstallResourceHooksNative(
-            IntPtr targetStreamPtr, IntPtr targetNamesPtr, IntPtr helperStreamMethod, IntPtr helperNamesMethod);
-
         [DllImport("modding_native", EntryPoint = "mod2_install_gameobject_ctor_hook")]
         private static extern int InstallGameObjectCtorHookNative(IntPtr ctorTargetAddr);
 
@@ -55,9 +32,7 @@ namespace Modding
 
         private static bool _initTried;
         private static bool _ready;
-        private static bool _locationHookInstalled;
         private static bool _addComponentHookInstalled;
-        private static bool _resourceHooksInstalled;
         private static bool _gameObjectCtorInstalled;
         private static bool _takeMPHookInstalled;
 
@@ -81,44 +56,6 @@ namespace Modding
             }
         }
 
-        internal static void EnsureLocationHook()
-        {
-            if (_locationHookInstalled || !_ready) return;
-            try
-            {
-                MethodInfo gl = typeof(Assembly).GetMethod("get_Location", BindingFlags.Public | BindingFlags.Instance);
-                if (gl == null) return;
-                IntPtr addr = Il2CppResolver.TryGetMethodPointer(gl);
-                if (addr == IntPtr.Zero) return;
-                _locationHookInstalled = InstallLocationHook(addr) != 0;
-                Logger.APILogger.Log(_locationHookInstalled
-                    ? "Assembly.Location native hook installed."
-                    : "Assembly.Location native hook failed to install.");
-                if (_locationHookInstalled)
-                {
-                    try
-                    {
-                        MethodInfo rl = typeof(NativeCompat).GetMethod(nameof(NativeCompat.ResolveLocationFallback),
-                            BindingFlags.NonPublic | BindingFlags.Static);
-                        if (rl != null)
-                        {
-                            IntPtr rlInfo = Il2CppResolver.TryGetMethodInfoPointer(rl, 1, "System.String");
-                            if (rlInfo != IntPtr.Zero) SetLocationResolverNative(rlInfo);
-                        }
-                        MethodInfo rlo = typeof(NativeCompat).GetMethod(nameof(NativeCompat.ResolveLocationFallbackObject),
-
-                            BindingFlags.NonPublic | BindingFlags.Static);
-                        if (rlo != null)
-                        {
-                            IntPtr rloInfo = Il2CppResolver.TryGetMethodInfoPointer(rlo, 1, "System.Reflection.Assembly");
-                            if (rloInfo != IntPtr.Zero) SetLocationResolverObjectNative(rloInfo);
-                        }
-                    }
-                    catch (Exception ex2) { Logger.APILogger.LogWarn("Native location resolver setup failed: " + ex2.Message); }
-                }
-            }
-            catch (Exception ex) { Logger.APILogger.LogWarn("Native Location hook install failed: " + ex.Message); }
-        }
         internal static void EnsureAddComponentHook()
         {
             if (_addComponentHookInstalled || !_ready) return;
@@ -142,38 +79,6 @@ namespace Modding
                     : "GameObject.AddComponent native compat hook failed to install.");
             }
             catch (Exception ex) { Logger.APILogger.LogWarn("Native AddComponent hook install failed: " + ex.Message); }
-        }
-
-        internal static void EnsureResourceHooks()
-        {
-            if (_resourceHooksInstalled || !_ready) return;
-            try
-            {
-                MethodInfo streamM = typeof(Assembly).GetMethod("GetManifestResourceStream",
-                    BindingFlags.Public | BindingFlags.Instance, null, new Type[] { typeof(string) }, null);
-                MethodInfo namesM = typeof(Assembly).GetMethod("GetManifestResourceNames",
-                    BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
-                if (streamM == null || namesM == null) return;
-                IntPtr streamPtr = Il2CppResolver.TryGetMethodPointer(streamM, 1, "System.String");
-                IntPtr namesPtr = Il2CppResolver.TryGetMethodPointer(namesM, 0, (string)null);
-                if (streamPtr == IntPtr.Zero || namesPtr == IntPtr.Zero) return;
-                MethodInfo hStream = typeof(EmbeddedResourceExtractor).GetMethod(
-                    nameof(EmbeddedResourceExtractor.GetManifestResourceStream),
-                    BindingFlags.NonPublic | BindingFlags.Static);
-                MethodInfo hNames = typeof(EmbeddedResourceExtractor).GetMethod(
-                    nameof(EmbeddedResourceExtractor.GetManifestResourceNames),
-                    BindingFlags.NonPublic | BindingFlags.Static);
-                if (hStream == null || hNames == null) return;
-                IntPtr hStreamInfo = Il2CppResolver.TryGetMethodInfoPointer(hStream, 2, "System.Reflection.Assembly");
-                IntPtr hNamesInfo = Il2CppResolver.TryGetMethodInfoPointer(hNames, 1, "System.Reflection.Assembly");
-                if (hStreamInfo == IntPtr.Zero || hNamesInfo == IntPtr.Zero) return;
-                _resourceHooksInstalled = InstallResourceHooksNative(streamPtr, namesPtr, hStreamInfo, hNamesInfo) != 0;
-                Logger.APILogger.Log(_resourceHooksInstalled
-                    ? "Assembly resource compat hooks installed."
-                    : "Assembly resource compat hooks failed to install.");
-            }
-            catch (Exception ex) { Logger.APILogger.LogWarn("Native resource hooks install failed: " + ex.Message); }
-
         }
 
         internal static void EnsureGameObjectCtorHook()
@@ -205,9 +110,6 @@ namespace Modding
             if (_takeMPHookInstalled || !_ready) return;
             try
             {
-                // The ILHook being replaced targets HeroController.TakeMP; older mods
-                // patched PlayerData.TakeMP. Try both so the native hook matches
-                // whichever one the game actually calls.
                 Type[] candidates = new Type[] { typeof(HeroController), typeof(PlayerData) };
                 for (int c = 0; c < candidates.Length && !_takeMPHookInstalled; c++)
                 {
@@ -235,27 +137,6 @@ namespace Modding
                 }
             }
             catch (Exception ex) { Logger.APILogger.LogWarn("TakeMP hook install failed: " + ex.Message); }
-        }
-
-        internal static void Register(Assembly asm, string path)
-        {
-            if (asm == null || string.IsNullOrEmpty(path)) return;
-            EnsureReady();
-            if (!_ready) return;
-            try
-            {
-                string name = null;
-                try { name = asm.GetName()?.Name; } catch { }
-                if (string.IsNullOrEmpty(name)) name = System.IO.Path.GetFileNameWithoutExtension(path);
-
-                Logger.APILogger.LogDebug("NativeBridge.Register: name='" + name + "' path='" + path + "'");
-
-                RegisterAssemblyPath(asm, name, path, IntPtr.Zero);
-            }
-            catch (Exception ex)
-            {
-                Logger.APILogger.LogError("NativeBridge.Register error: " + ex);
-            }
         }
 
         internal static IntPtr ObjectToPtr(object o) => ToObjectPtr(o);

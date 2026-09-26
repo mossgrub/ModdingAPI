@@ -19,6 +19,7 @@ namespace Modding
         public static void Initialize()
         {
             _useHybridCLR = HybridCLRInitializer.IsIL2CPP() && HybridCLRInitializer.IsInitialized;
+            CompatHooks.Apply();
             SetupAssemblyResolve();
             BuildAssemblyCache();
         }
@@ -34,9 +35,7 @@ namespace Modding
             string fileName = Path.GetFileNameWithoutExtension(path);
 
             if (_loadedAssemblies.TryGetValue(fileName, out Assembly cachedAssembly))
-            {
                 return cachedAssembly;
-            }
 
             if (!_loadingAssemblies.TryAdd(fileName, true))
             {
@@ -49,35 +48,9 @@ namespace Modding
                 Assembly asm = _useHybridCLR ? LoadAssemblyHybridCLR(path) : LoadAssemblyMono(path);
                 if (asm != null)
                 {
-                    if (_useHybridCLR)
-                    {
-                        // Removed EmbeddedResourceExtractor.Extract
-                    }
                     _loadedAssemblies[fileName] = asm;
                     _loadedAssemblies[asm.GetName().Name] = asm;
-                    NativeCompat.RegisterAssemblyPath(asm, path);
-                    NativeBridge.Register(asm, path);
-
-                    try
-                    {
-                        string dir = Path.GetDirectoryName(path);
-                        if (!string.IsNullOrEmpty(dir))
-                        {
-                            Directory.CreateDirectory(dir);
-                        }
-                    }
-                    catch (Exception dirEx)
-                    {
-                        Logger.APILogger.LogWarn($"Could not ensure mod directory for `{path}`: {dirEx.Message}");
-                    }
-                    try
-                    {
-                        string loc = null;
-                        try { loc = asm.Location; } catch (Exception lx) { loc = "<err:" + lx.GetType().Name + ">"; }
-                        Logger.APILogger.Log("Loc Probe " + (asm.GetName().Name ?? "?") +
-                            " Location='" + (loc ?? "<null>") + "' expected='" + path + "'");
-                    }
-                    catch { }
+                    CompatHooks.Register(asm, path);
                 }
                 return asm;
             }
@@ -100,8 +73,7 @@ namespace Modding
             }
             catch (FileLoadException)
             {
-                byte[] assemblyBytes = File.ReadAllBytes(path);
-                return Assembly.Load(assemblyBytes);
+                return Assembly.Load(File.ReadAllBytes(path));
             }
         }
 
@@ -110,157 +82,57 @@ namespace Modding
             try
             {
                 byte[] originalBytes = File.ReadAllBytes(path);
-                if (originalBytes == null || originalBytes.Length == 0)
+                if (originalBytes.Length == 0)
                 {
-                    Logger.APILogger.LogError("HybridCLR assembly is empty: " + path);
+                    Logger.APILogger.LogError($"HybridCLR assembly is empty: {path}");
                     return null;
                 }
 
-                bool patched = false;
-                byte[] loadBytes = RedirectMonoModRuntimeDetourReference(originalBytes, path, out patched);
+                byte[] loadBytes = RedirectMonoModRuntimeDetourReference(originalBytes, path, out bool patched);
+                Logger.APILogger.Log($"Hybrid CLR loading {(patched ? "patched" : "original")} assembly via Assembly.Load(bytes): {path}");
 
-                Logger.APILogger.Log(
-                    "Hybrid CLR loading " + (patched ? "patched" : "original") +
-                    " assembly via Assembly.Load(bytes): " + path);
-
-                Assembly asm = Assembly.Load(loadBytes);
-
-                if (asm != null)
-                {
-                    NativeCompat.AssemblyLocations[asm] = path;
-                }
-
-                return asm;
+                return Assembly.Load(loadBytes);
             }
             catch (Exception ex)
             {
-                Logger.APILogger.LogError("HybridCLR failed to load " + path + ": " + ex);
+                Logger.APILogger.LogError($"HybridCLR failed to load {path}: {ex}");
                 return null;
             }
         }
 
-        private static byte[] RedirectMonoModRuntimeDetourReference(
-            byte[] assemblyBytes,
-            string assemblyPath,
-            out bool patched)
+        private static byte[] RedirectMonoModRuntimeDetourReference(byte[] assemblyBytes, string assemblyPath, out bool patched)
         {
             patched = false;
-
-            if (assemblyBytes == null ||
-                assemblyBytes.Length == 0)
-            {
-                return assemblyBytes;
-            }
-
             try
             {
-                using (MemoryStream input =
-                       new MemoryStream(assemblyBytes))
+                using var input = new MemoryStream(assemblyBytes);
+                var assembly = Mono.Cecil.AssemblyDefinition.ReadAssembly(input, new Mono.Cecil.ReaderParameters { InMemory = true, ReadSymbols = false });
+
+                var targetReference = assembly.MainModule.AssemblyReferences
+                    .FirstOrDefault(r => string.Equals(r.Name, "MonoMod.RuntimeDetour", StringComparison.OrdinalIgnoreCase));
+
+                if (targetReference == null)
                 {
-                    Mono.Cecil.ReaderParameters readerParameters =
-                        new Mono.Cecil.ReaderParameters
-                        {
-                            InMemory = true,
-                            ReadSymbols = false
-                        };
-
-                    Mono.Cecil.AssemblyDefinition assembly =
-                        Mono.Cecil.AssemblyDefinition.ReadAssembly(
-                            input,
-                            readerParameters);
-
-                    Mono.Cecil.AssemblyNameReference targetReference =
-                        null;
-
-                    foreach (
-                        Mono.Cecil.AssemblyNameReference reference
-                        in assembly.MainModule.AssemblyReferences)
-                    {
-                        if (string.Equals(
-                            reference.Name,
-                            "MonoMod.RuntimeDetour",
-                            StringComparison.OrdinalIgnoreCase))
-                        {
-                            targetReference = reference;
-                            break;
-                        }
-                    }
-
-                    if (targetReference == null)
-                    {
-                        Logger.APILogger.Log(
-                            "MonoMod.RuntimeDetour reference not found: " +
-                            assemblyPath);
-
-                        return assemblyBytes;
-                    }
-
-                    Assembly apiAssembly =
-                        typeof(AssemblyLoader).Assembly;
-
-                    AssemblyName apiName =
-                        apiAssembly.GetName();
-
-                    Logger.APILogger.Log(
-                        "Found MonoMod.RuntimeDetour reference in: " +
-                        assemblyPath);
-
-                    Logger.APILogger.Log(
-                        "IL Redirect Original reference: " +
-                        targetReference.Name +
-                        ", Version=" +
-                        targetReference.Version);
-
-                    Logger.APILogger.Log(
-                        "IL Redirect Target: " +
-                        apiName.Name +
-                        ", Version=" +
-                        apiName.Version);
-
-                    targetReference.Name =
-                        apiName.Name;
-
-                    targetReference.Version =
-                        apiName.Version;
-
-                    targetReference.PublicKeyToken =
-                        apiName.GetPublicKeyToken();
-
-                    using (MemoryStream output =
-                           new MemoryStream())
-                    {
-                        assembly.Write(output);
-
-                        byte[] rewrittenBytes =
-                            output.ToArray();
-
-                        if (rewrittenBytes == null ||
-                            rewrittenBytes.Length == 0)
-                        {
-                            Logger.APILogger.LogError(
-                                "Cecil produced an empty rewritten assembly.");
-
-                            return assemblyBytes;
-                        }
-
-                        patched = true;
-
-                        Logger.APILogger.Log(
-                            "Assembly reference rewritten successfully: " +
-                            assemblyPath);
-
-                        return rewrittenBytes;
-                    }
+                    Logger.APILogger.Log($"MonoMod.RuntimeDetour reference not found: {assemblyPath}");
+                    return assemblyBytes;
                 }
+
+                AssemblyName apiName = typeof(AssemblyLoader).Assembly.GetName();
+                Logger.APILogger.Log($"Redirecting MonoMod.RuntimeDetour in {assemblyPath} -> {apiName.Name}, Version={apiName.Version}");
+
+                targetReference.Name = apiName.Name;
+                targetReference.Version = apiName.Version;
+                targetReference.PublicKeyToken = apiName.GetPublicKeyToken();
+
+                using var output = new MemoryStream();
+                assembly.Write(output);
+
+                patched = true;
+                return output.ToArray();
             }
             catch (Exception ex)
             {
-                Logger.APILogger.LogError(
-                    "Failed to rewrite MonoMod.RuntimeDetour reference: " +
-                    ex);
-
-                patched = false;
-
+                Logger.APILogger.LogError($"Failed to rewrite MonoMod.RuntimeDetour reference: {ex}");
                 return assemblyBytes;
             }
         }
@@ -277,9 +149,7 @@ namespace Modding
             {
                 Assembly asm = Assembly.Load(assemblyBytes);
                 if (asm != null)
-                {
                     _loadedAssemblies[asm.GetName().Name] = asm;
-                }
                 return asm;
             }
             catch (Exception ex)
@@ -304,19 +174,16 @@ namespace Modding
         private static void BuildAssemblyCache()
         {
             _assemblyPathCache.Clear();
-            string[] searchPaths = GetAssemblySearchPaths();
 
-            foreach (string searchPath in searchPaths)
+            foreach (string searchPath in GetAssemblySearchPaths())
             {
                 if (string.IsNullOrEmpty(searchPath) || !Directory.Exists(searchPath)) continue;
 
                 try
                 {
-                    IndexDirectory(searchPath);
-
-                    foreach (string subDir in Directory.GetDirectories(searchPath, "*", SearchOption.TopDirectoryOnly))
+                    foreach (string file in Directory.EnumerateFiles(searchPath, "*.dll", SearchOption.AllDirectories))
                     {
-                        IndexDirectory(subDir);
+                        _assemblyPathCache.TryAdd(Path.GetFileNameWithoutExtension(file), file);
                     }
                 }
                 catch (Exception ex)
@@ -326,59 +193,39 @@ namespace Modding
             }
         }
 
-        private static void IndexDirectory(string dirPath)
-        {
-            string[] files = Directory.GetFiles(dirPath, "*.dll", SearchOption.TopDirectoryOnly);
-            foreach (string file in files)
-            {
-                string fileName = Path.GetFileNameWithoutExtension(file);
-                _assemblyPathCache.TryAdd(fileName, file);
-            }
-        }
-
         private static Assembly ResolveModAssembly(object sender, ResolveEventArgs args)
         {
             try
             {
-                AssemblyName requestedName = new AssemblyName(args.Name);
-                string assemblyName = requestedName.Name;
+                string assemblyName = new AssemblyName(args.Name).Name;
 
                 if (_loadedAssemblies.TryGetValue(assemblyName, out Assembly loaded))
-                {
                     return loaded;
-                }
 
 #if ENABLE_IL2CPP
                 if (assemblyName.StartsWith("MMHOOK_"))
                 {
-                    if (_assemblyPathCache.TryGetValue(assemblyName, out string hookPath))
-                    {
-                        return LoadAssembly(hookPath);
-                    }
-                    return null;
+                    return _assemblyPathCache.TryGetValue(assemblyName, out string hookPath)
+                        ? LoadAssembly(hookPath)
+                        : null;
                 }
 
                 if (IsMonoModAssembly(assemblyName))
-                {
                     return typeof(AssemblyLoader).Assembly;
-                }
 #endif
 
                 foreach (Assembly loadedAssembly in AppDomain.CurrentDomain.GetAssemblies())
                 {
-                    if (loadedAssembly.GetName().Name == assemblyName)
+                    if (string.Equals(loadedAssembly.GetName().Name, assemblyName, StringComparison.OrdinalIgnoreCase))
                     {
                         _loadedAssemblies[assemblyName] = loadedAssembly;
                         return loadedAssembly;
                     }
                 }
 
-                if (_assemblyPathCache.TryGetValue(assemblyName, out string potentialPath))
-                {
-                    return LoadAssembly(potentialPath);
-                }
-
-                return null;
+                return _assemblyPathCache.TryGetValue(assemblyName, out string potentialPath)
+                    ? LoadAssembly(potentialPath)
+                    : null;
             }
             catch (Exception ex)
             {
@@ -387,56 +234,35 @@ namespace Modding
             }
         }
 
-        internal static bool IsMonoModAssembly(string assemblyName)
+        internal static bool IsMonoModAssembly(string assemblyName) => assemblyName switch
         {
-            return assemblyName == "MonoMod.RuntimeDetour" ||
-                   assemblyName == "MonoMod.Common" ||
-                   assemblyName == "MonoMod.Core" ||
-                   assemblyName == "MonoMod.IL" ||
-                   assemblyName == "MonoMod.Patcher" ||
-                   assemblyName == "MonoMod.Utils" ||
-                   assemblyName == "MonoMod.Backports" ||
-                   assemblyName == "MonoMod.Iced" ||
-                   assemblyName == "Mono.Cecil" ||
-                   assemblyName == "Mono.Cecil.Mdb" ||
-                   assemblyName == "Mono.Cecil.Pdb" ||
-                   assemblyName == "MonoMod.Mono.Cecil" ||
-                   assemblyName == "MonoMod.Mono.Cecil.Mdb" ||
-                   assemblyName == "MonoMod.Mono.Cecil.Pdb";
-        }
+            "MonoMod.RuntimeDetour" or "MonoMod.Common" or "MonoMod.Core" or
+            "MonoMod.IL" or "MonoMod.Patcher" or "MonoMod.Utils" or
+            "MonoMod.Backports" or "MonoMod.Iced" or "Mono.Cecil" or
+            "Mono.Cecil.Mdb" or "Mono.Cecil.Pdb" or "MonoMod.Mono.Cecil" or
+            "MonoMod.Mono.Cecil.Mdb" or "MonoMod.Mono.Cecil.Pdb" => true,
+            _ => false
+        };
 
         private static string[] GetAssemblySearchPaths()
         {
             var paths = new List<string>();
 
             string modsPath = GetModsPath();
-            if (!string.IsNullOrEmpty(modsPath))
-            {
-                paths.Add(modsPath);
-            }
+            if (!string.IsNullOrEmpty(modsPath)) paths.Add(modsPath);
 
 #if UNITY_ANDROID
             string streamingPath = Application.streamingAssetsPath;
-
             string androidManagedPath = Path.Combine(streamingPath, "bin", "Data", "Managed");
-            if (Directory.Exists(androidManagedPath))
-            {
-                paths.Add(androidManagedPath);
-            }
+            if (Directory.Exists(androidManagedPath)) paths.Add(androidManagedPath);
 
             string hybridCLRPath = Path.Combine(streamingPath, "HybridCLRData", "il2cpp_data", "Managed");
-            if (Directory.Exists(hybridCLRPath))
-            {
-                 paths.Add(hybridCLRPath);
-            }
+            if (Directory.Exists(hybridCLRPath)) paths.Add(hybridCLRPath);
 #elif UNITY_EDITOR
             paths.Add(@"D:\SteamLibrary\steamapps\common\Hollow Knight\hollow_knight_Data\Managed");
 #else
             string managedPath = Path.Combine(Application.dataPath, "Managed");
-            if (Directory.Exists(managedPath))
-            {
-                paths.Add(managedPath);
-            }
+            if (Directory.Exists(managedPath)) paths.Add(managedPath);
 #endif
 
             return paths.ToArray();
@@ -449,13 +275,7 @@ namespace Modding
 #elif UNITY_ANDROID
             return Path.Combine(Application.persistentDataPath, "Mods");
 #else
-            return SystemInfo.operatingSystemFamily switch
-            {
-                OperatingSystemFamily.Windows => Path.Combine(Application.dataPath, "Managed", "Mods"),
-                OperatingSystemFamily.MacOSX => Path.Combine(Application.dataPath, "Resources", "Data", "Managed", "Mods"),
-                OperatingSystemFamily.Linux => Path.Combine(Application.dataPath, "Managed", "Mods"),
-                _ => null
-            };
+            return Path.Combine(Application.dataPath, SystemInfo.operatingSystemFamily == OperatingSystemFamily.MacOSX ? "Resources/Data/Managed/Mods" : "Managed/Mods");
 #endif
         }
     }

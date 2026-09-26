@@ -392,8 +392,6 @@ namespace Modding
 			LoadState |= ModLoadState.Loaded;
 			new ModListMenu().InitMenuCreation();
 			UnityEngine.Object.Destroy(coroutineHolder.gameObject);
-
-			AssemblyLoader.SetupAssemblyResolve();
 		}
 
 		private static void GetPreloads(ModInstance[] orderedMods, List<string> scenes, Dictionary<string, List<(ModInstance, List<string> objectNames)>> toPreload, Dictionary<string, List<Func<IEnumerator>>> sceneHooks)

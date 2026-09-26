@@ -9,12 +9,6 @@ namespace Modding
     {
         private static bool _installed;
 
-        internal static readonly ConcurrentDictionary<Assembly, string> AssemblyLocations =
-            new ConcurrentDictionary<Assembly, string>();
-
-        internal static readonly ConcurrentDictionary<string, string> NameLocations =
-            new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
         private static readonly ConcurrentDictionary<MethodBase, List<Delegate>> HandlersByMethod =
             new ConcurrentDictionary<MethodBase, List<Delegate>>();
 
@@ -40,15 +34,11 @@ namespace Modding
 
             InstallHookEndpointRedirect();
 
-            NativeBridge.EnsureLocationHook();
-
             if (ModHooks.GlobalSettings.ComponentHook)
             {
                 NativeBridge.EnsureAddComponentHook();
                 NativeBridge.EnsureGameObjectCtorHook();
             }
-
-            NativeBridge.EnsureResourceHooks();
 
             LogILHookProvider();
         }
@@ -305,127 +295,6 @@ namespace Modding
         {
             ParameterInfo[] ps = d?.Method?.GetParameters();
             return ps != null && ps.Length > 0 && typeof(Delegate).IsAssignableFrom(ps[0].ParameterType);
-        }
-
-        private static bool _locationPatched;
-
-        private static void InstallAssemblyLocationPatch()
-        {
-            if (_locationPatched || !DetourBridge.IsAvailable) return;
-
-            try
-            {
-                MethodInfo getLocation = typeof(Assembly).GetMethod("get_Location", BindingFlags.Public | BindingFlags.Instance);
-                if (getLocation == null)
-                {
-                    Logger.APILogger.LogWarn("Could not find Assembly.get_Location.");
-                    return;
-                }
-
-                Delegate handler = new Func<Func<Assembly, string>, Assembly, string>(LocationHandler);
-                if (DetourBridge.TryInstallLocationHook(handler, out string error))
-                {
-                    _locationPatched = true;
-                    Logger.APILogger.Log("Assembly.Location patched.");
-                }
-                else
-                {
-                    Logger.APILogger.LogWarn("Assembly.Location patch failed: " + error);
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.APILogger.LogError("Assembly.Location patch error: " + ex.Message);
-            }
-        }
-
-        private static string LocationHandler(Func<Assembly, string> orig, Assembly self)
-        {
-            if (self != null && AssemblyLocations.TryGetValue(self, out string mapped))
-            {
-                return mapped;
-            }
-
-            try
-            {
-                return orig(self);
-            }
-            catch
-            {
-                return string.Empty;
-            }
-        }
-
-        public static bool TryGetAssemblyPath(Assembly asm, out string path)
-        {
-            if (asm == null)
-            {
-                path = null;
-                return false;
-            }
-
-            if (AssemblyLocations.TryGetValue(asm, out path) && !string.IsNullOrEmpty(path))
-            {
-                return true;
-            }
-
-            try
-            {
-                string nm = asm.GetName()?.Name;
-                if (!string.IsNullOrEmpty(nm) && NameLocations.TryGetValue(nm, out path) && !string.IsNullOrEmpty(path))
-                {
-                    AssemblyLocations[asm] = path;
-                    return true;
-                }
-            }
-            catch { }
-
-            string fallback = asm.Location;
-            if (!string.IsNullOrEmpty(fallback))
-            {
-                path = fallback;
-                AssemblyLocations[asm] = fallback;
-                return true;
-            }
-
-            path = null;
-            return false;
-        }
-
-        internal static string ResolveLocationFallback(string assemblyName)
-        {
-            if (string.IsNullOrEmpty(assemblyName)) return null;
-            if (NameLocations.TryGetValue(assemblyName, out string path) && !string.IsNullOrEmpty(path))
-                return path;
-            return null;
-        }
-        internal static string ResolveLocationFallbackObject(Assembly asm)
-        {
-            if (asm == null) return null;
-            if (AssemblyLocations.TryGetValue(asm, out string path) && !string.IsNullOrEmpty(path))
-                return path;
-            try
-            {
-                string n = asm.GetName()?.Name;
-                if (!string.IsNullOrEmpty(n) && NameLocations.TryGetValue(n, out path) && !string.IsNullOrEmpty(path))
-                    return path;
-            }
-            catch { }
-            return null;
-        }
-
-        public static void RegisterAssemblyPath(Assembly asm, string path)
-        {
-            if (asm != null && !string.IsNullOrEmpty(path))
-            {
-                AssemblyLocations[asm] = path;
-                try
-                {
-                    string name = asm.GetName()?.Name;
-                    if (!string.IsNullOrEmpty(name)) NameLocations[name] = path;
-                }
-                catch { }
-            }
         }
     }
 }
