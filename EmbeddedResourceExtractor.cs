@@ -179,7 +179,7 @@ namespace Modding
         internal static Stream GetManifestResourceStream(Assembly asm, string name)
         {
             if (asm == null || string.IsNullOrEmpty(name)) return null;
-            if (!NativeCompat.TryGetAssemblyPath(asm, out string path) || string.IsNullOrEmpty(path) || !File.Exists(path))
+            if (!CompatHooks.TryGetAssemblyPath(asm, out string path) || string.IsNullOrEmpty(path) || !File.Exists(path))
                 return null;
 
             try
@@ -208,7 +208,7 @@ namespace Modding
         internal static string[] GetManifestResourceNames(Assembly asm)
         {
             if (asm == null) return Array.Empty<string>();
-            if (!NativeCompat.TryGetAssemblyPath(asm, out string path) || string.IsNullOrEmpty(path) || !File.Exists(path))
+            if (!CompatHooks.TryGetAssemblyPath(asm, out string path) || string.IsNullOrEmpty(path) || !File.Exists(path))
                 return Array.Empty<string>();
 
             var names = new List<string>();

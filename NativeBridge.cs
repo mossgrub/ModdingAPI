@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using UnityEngine;
@@ -105,6 +106,74 @@ namespace Modding
             catch (Exception ex) { Logger.APILogger.LogWarn("GameObject ctor hook install failed: " + ex.Message); }
         }
 
+        private static readonly object ManagedObjectCacheLock =
+    new object();
+
+        private static readonly Dictionary<IntPtr, WeakReference>
+            ManagedObjectCache =
+                new Dictionary<IntPtr, WeakReference>();
+
+        private static FieldInfo _unityCachedPtrField;
+        private static bool _unityCachedPtrFieldSearched;
+
+        private static FieldInfo GetUnityCachedPtrField()
+        {
+            if (_unityCachedPtrFieldSearched)
+            {
+                return _unityCachedPtrField;
+            }
+
+            _unityCachedPtrFieldSearched = true;
+
+            try
+            {
+                _unityCachedPtrField =
+                    typeof(UnityEngine.Object).GetField(
+                        "m_CachedPtr",
+                        BindingFlags.Instance |
+                        BindingFlags.NonPublic);
+            }
+            catch
+            {
+                _unityCachedPtrField = null;
+            }
+
+            return _unityCachedPtrField;
+        }
+
+        private static IntPtr GetUnityCachedPtr(
+            UnityEngine.Object obj)
+        {
+            if (obj == null)
+            {
+                return IntPtr.Zero;
+            }
+
+            try
+            {
+                FieldInfo field =
+                    GetUnityCachedPtrField();
+
+                if (field == null)
+                {
+                    return IntPtr.Zero;
+                }
+
+                object value =
+                    field.GetValue(obj);
+
+                if (value is IntPtr)
+                {
+                    return (IntPtr)value;
+                }
+            }
+            catch
+            {
+            }
+
+            return IntPtr.Zero;
+        }
+
         internal static void EnsureTakeMPHook()
         {
             if (_takeMPHookInstalled || !_ready) return;
@@ -141,6 +210,105 @@ namespace Modding
 
         internal static IntPtr ObjectToPtr(object o) => ToObjectPtr(o);
 
+        internal static object FromObjectPtr(IntPtr ptr, Type expectedType)
+        {
+            if (ptr == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            if (expectedType != null &&
+                typeof(UnityEngine.Object).IsAssignableFrom(
+                    expectedType))
+            {
+                lock (ManagedObjectCacheLock)
+                {
+                    WeakReference cached;
+
+                    if (ManagedObjectCache.TryGetValue(
+                        ptr,
+                        out cached))
+                    {
+                        try
+                        {
+                            object cachedTarget =
+                                cached.Target;
+
+                            if (cachedTarget != null &&
+                                expectedType.IsInstanceOfType(
+                                    cachedTarget))
+                            {
+                                UnityEngine.Object cachedUnityObject =
+                                    cachedTarget as UnityEngine.Object;
+
+                                if (cachedUnityObject != null &&
+                                    GetUnityCachedPtr(
+                                        cachedUnityObject) == ptr)
+                                {
+                                    return cachedTarget;
+                                }
+                            }
+                        }
+                        catch
+                        {
+                        }
+                    }
+                }
+
+                try
+                {
+                    UnityEngine.Object[] objects =
+                        UnityEngine.Resources.FindObjectsOfTypeAll(
+                            expectedType);
+
+                    for (int i = 0;
+                         i < objects.Length;
+                         i++)
+                    {
+                        UnityEngine.Object obj =
+                            objects[i];
+
+                        if (obj == null)
+                        {
+                            continue;
+                        }
+
+                        IntPtr cachedPtr =
+                            GetUnityCachedPtr(obj);
+
+                        if (cachedPtr != ptr)
+                        {
+                            continue;
+                        }
+
+                        lock (ManagedObjectCacheLock)
+                        {
+                            ManagedObjectCache[ptr] =
+                                new WeakReference(obj);
+                        }
+
+                        Logger.APILogger.LogDebug(
+                            "Resolved " +
+                            expectedType.FullName +
+                            " from native pointer 0x" +
+                            ptr.ToInt64().ToString("X"));
+
+                        return obj;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.APILogger.LogWarn(
+                        "Unity object lookup failed for " +
+                        expectedType.FullName +
+                        ": " +
+                        ex.Message);
+                }
+            }
+
+            return FromObjectPtrUnsafe(ptr);
+        }
+
         private static unsafe IntPtr ToObjectPtr(object o)
         {
             if (o == null) return IntPtr.Zero;
@@ -148,7 +316,7 @@ namespace Modding
             return *(IntPtr*)&tr;
         }
 
-        internal static unsafe object FromObjectPtr(IntPtr p)
+        private unsafe static object FromObjectPtrUnsafe(IntPtr p)
         {
             if (p == IntPtr.Zero) return null;
             object o = null;
@@ -262,7 +430,7 @@ namespace Modding
                         }
                         finally { Marshal.FreeHGlobal(tmp); }
                     }
-                    return FromObjectPtr(result);
+                    return FromObjectPtr(result, retType);
                 }
                 finally
                 {

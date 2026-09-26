@@ -50,6 +50,50 @@ namespace MonoMod.RuntimeDetour
         public bool IsApplied => _originalDelegate != null;
         public bool IsDisposed => _disposed;
 
+        public Detour(
+    MethodInfo original,
+    MethodInfo replacement)
+    : this(
+        (MethodBase)original,
+        replacement)
+        {
+        }
+
+        public Detour(
+            MethodBase original,
+            MethodBase replacement)
+            : this(
+                original,
+                replacement as MethodInfo)
+        {
+            if (!(replacement is MethodInfo))
+            {
+                throw new ArgumentException(
+                    "Only MethodInfo replacement methods are supported.",
+                    nameof(replacement));
+            }
+        }
+
+        private static MethodBase GetDelegateMethod(
+            Delegate del)
+        {
+            if (del == null)
+            {
+                throw new ArgumentNullException(
+                    nameof(del));
+            }
+
+            return del.Method;
+        }
+
+        public Detour(
+            Delegate original,
+            Delegate replacement)
+            : this(
+                GetDelegateMethod(original),
+                replacement)
+        {
+        }
         private void Apply()
         {
             RemoveCurrent();

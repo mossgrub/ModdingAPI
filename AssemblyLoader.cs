@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using UnityEngine;
+using Mono.Cecil;
 
 namespace Modding
 {
@@ -106,7 +107,21 @@ namespace Modding
             try
             {
                 using var input = new MemoryStream(assemblyBytes);
-                var assembly = Mono.Cecil.AssemblyDefinition.ReadAssembly(input, new Mono.Cecil.ReaderParameters { InMemory = true, ReadSymbols = false });
+                DefaultAssemblyResolver resolver =
+                CreateMobileCecilResolver(assemblyPath);
+
+                Mono.Cecil.ReaderParameters readerParameters =
+                    new Mono.Cecil.ReaderParameters
+                    {
+                        InMemory = true,
+                        ReadSymbols = false,
+                        AssemblyResolver = resolver
+                    };
+
+                Mono.Cecil.AssemblyDefinition assembly =
+                    Mono.Cecil.AssemblyDefinition.ReadAssembly(
+                        input,
+                        readerParameters);
 
                 var targetReference = assembly.MainModule.AssemblyReferences
                     .FirstOrDefault(r => string.Equals(r.Name, "MonoMod.RuntimeDetour", StringComparison.OrdinalIgnoreCase));
@@ -135,6 +150,91 @@ namespace Modding
                 Logger.APILogger.LogError($"Failed to rewrite MonoMod.RuntimeDetour reference: {ex}");
                 return assemblyBytes;
             }
+        }
+
+        private static DefaultAssemblyResolver
+    CreateMobileCecilResolver(string assemblyPath)
+        {
+            DefaultAssemblyResolver resolver =
+                new DefaultAssemblyResolver();
+
+            HashSet<string> directories =
+                new HashSet<string>(
+                    StringComparer.OrdinalIgnoreCase);
+
+            Action<string> addDirectory =
+                directory =>
+                {
+                    if (string.IsNullOrEmpty(directory))
+                        return;
+
+                    try
+                    {
+                        if (Directory.Exists(directory))
+                        {
+                            directories.Add(directory);
+                        }
+                    }
+                    catch
+                    {
+                    }
+                };
+
+            addDirectory(
+                Path.GetDirectoryName(
+                    assemblyPath));
+
+            addDirectory(
+                Application.dataPath);
+
+            addDirectory(
+                Path.Combine(
+                    Application.dataPath,
+                    "Managed"));
+
+            addDirectory(
+                Path.Combine(
+                    Application.dataPath,
+                    "HybridCLRData",
+                    "AssembliesPostIl2CppStrip"));
+
+            addDirectory(
+                Path.Combine(
+                    Application.dataPath,
+                    "HybridCLRData",
+                    "il2cpp_data",
+                    "Managed"));
+
+            addDirectory(
+                Path.Combine(
+                    Application.persistentDataPath,
+                    "HybridCLRData",
+                    "AssembliesPostIl2CppStrip"));
+
+            addDirectory(
+                Path.Combine(
+                    Application.persistentDataPath,
+                    "HybridCLRData",
+                    "il2cpp_data",
+                    "Managed"));
+
+            foreach (string directory in directories)
+            {
+                try
+                {
+                    resolver.AddSearchDirectory(
+                        directory);
+
+                    Logger.APILogger.LogDebug(
+                        "Cecil search path: " +
+                        directory);
+                }
+                catch
+                {
+                }
+            }
+
+            return resolver;
         }
 
         public static Assembly LoadAssembly(byte[] assemblyBytes)
@@ -234,15 +334,30 @@ namespace Modding
             }
         }
 
-        internal static bool IsMonoModAssembly(string assemblyName) => assemblyName switch
+        internal static bool IsMonoModAssembly(string assemblyName)
         {
-            "MonoMod.RuntimeDetour" or "MonoMod.Common" or "MonoMod.Core" or
-            "MonoMod.IL" or "MonoMod.Patcher" or "MonoMod.Utils" or
-            "MonoMod.Backports" or "MonoMod.Iced" or "Mono.Cecil" or
-            "Mono.Cecil.Mdb" or "Mono.Cecil.Pdb" or "MonoMod.Mono.Cecil" or
-            "MonoMod.Mono.Cecil.Mdb" or "MonoMod.Mono.Cecil.Pdb" => true,
-            _ => false
-        };
+            switch (assemblyName)
+            {
+                case "MonoMod.RuntimeDetour":
+                case "MonoMod.Common":
+                case "MonoMod.Core":
+                case "MonoMod.IL":
+                case "MonoMod.Patcher":
+                case "MonoMod.Utils":
+                case "MonoMod.Backports":
+                case "MonoMod.Iced":
+                case "Mono.Cecil":
+                case "Mono.Cecil.Mdb":
+                case "Mono.Cecil.Pdb":
+                case "MonoMod.Mono.Cecil":
+                case "MonoMod.Mono.Cecil.Mdb":
+                case "MonoMod.Mono.Cecil.Pdb":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
 
         private static string[] GetAssemblySearchPaths()
         {

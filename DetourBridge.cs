@@ -544,6 +544,38 @@ namespace Modding
             return GetDelegateTypeForMethod(method, out _);
         }
 
+        private static Type GetManagedBridgeArgumentType(
+    MethodInfo method,
+    int bridgeIndex)
+        {
+            if (method == null)
+            {
+                return null;
+            }
+
+            if (!method.IsStatic &&
+                bridgeIndex == 0)
+            {
+                return method.DeclaringType;
+            }
+
+            int parameterIndex =
+                bridgeIndex -
+                (method.IsStatic ? 0 : 1);
+
+            ParameterInfo[] parameters =
+                method.GetParameters();
+
+            if (parameterIndex < 0 ||
+                parameterIndex >= parameters.Length)
+            {
+                return null;
+            }
+
+            return parameters[parameterIndex]
+                .ParameterType;
+        }
+
         internal static Type GetManagedDelegateTypeForMethod(
     MethodInfo method,
     out string error)
@@ -839,7 +871,32 @@ namespace Modding
                         {
                             try
                             {
-                                args[ri] = p == IntPtr.Zero ? null : NativeBridge.FromObjectPtr(p);
+                                Type expectedType =
+                                GetManagedBridgeArgumentType(
+                                st.Target,
+                                ri);
+
+                                object managedObject =
+                                    p == IntPtr.Zero
+                                        ? null
+                                        : NativeBridge.FromObjectPtr(
+                                            p,
+                                            expectedType);
+
+                                args[ri] =
+                                    managedObject;
+
+                                if (ri == 0 &&
+                                    st.InstanceCall)
+                                {
+                                    Logger.APILogger.LogDebug(
+                                        "Self conversion: " +
+                                        st.Target.DeclaringType?.FullName +
+                                        " -> " +
+                                        (managedObject == null
+                                            ? "<NULL>"
+                                            : managedObject.GetType().FullName));
+                                }
                             }
                             catch (Exception ex)
                             {
@@ -967,14 +1024,71 @@ namespace Modding
 
             try
             {
-                int argLen = args != null ? args.Length : 0;
-                if (argLen > 0 && st.RefIndexes != null)
+                int argLen = args != null ? args.Length: 0;
+
+                if (argLen > 0 &&
+                    st.RefIndexes != null)
                 {
-                    for (int i = 0; i < st.RefIndexes.Length; i++)
+                    for (int i = 0;
+                         i < st.RefIndexes.Length;
+                         i++)
                     {
-                        int ri = st.RefIndexes[i];
-                        if (ri >= 0 && ri < argLen && args[ri] is IntPtr p)
-                            args[ri] = p == IntPtr.Zero ? null : NativeBridge.FromObjectPtr(p);
+                        int ri =
+                            st.RefIndexes[i];
+
+                        if (ri < 0 ||
+                            ri >= argLen)
+                        {
+                            continue;
+                        }
+
+                        if (!(args[ri] is IntPtr))
+                        {
+                            continue;
+                        }
+
+                        IntPtr p =
+                            (IntPtr)args[ri];
+
+                        try
+                        {
+                            Type expectedType =
+                                GetManagedBridgeArgumentType(
+                                    st.Target,
+                                    ri);
+
+                            object managedObject =
+                                p == IntPtr.Zero
+                                    ? null
+                                    : NativeBridge.FromObjectPtr(
+                                        p,
+                                        expectedType);
+
+                            args[ri] =
+                                managedObject;
+
+                            if (ri == 0 &&
+                                st.InstanceCall)
+                            {
+                                Logger.APILogger.LogDebug(
+                                    "Self conversion: " +
+                                    st.Target.DeclaringType?.FullName +
+                                    " -> " +
+                                    (managedObject == null
+                                        ? "<NULL>"
+                                        : managedObject.GetType().FullName));
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.APILogger.LogError(
+                                "Failed to convert pointer in argument " +
+                                ri +
+                                ": " +
+                                ex.Message);
+
+                            args[ri] = null;
+                        }
                     }
                 }
                 object[] full = new object[argLen + 1];
@@ -1104,7 +1218,7 @@ namespace Modding
                 if (result != null) return result;
             }
 
-            if (self != null && NativeCompat.TryGetAssemblyPath(self, out string mapped) && !string.IsNullOrEmpty(mapped))
+            if (self != null && CompatHooks.TryGetAssemblyPath(self, out string mapped) && !string.IsNullOrEmpty(mapped))
             {
                 return mapped;
             }
