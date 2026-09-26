@@ -512,11 +512,31 @@ namespace Modding
                         new DefaultAssemblyResolver();
 
                     string referenceAssemblyDirectory =
-                        Path.GetDirectoryName(referencePath);
+                        Path.GetDirectoryName(
+                            referencePath);
 
-                    if (!string.IsNullOrEmpty(referenceAssemblyDirectory))
+                    if (!string.IsNullOrEmpty(
+                            referenceAssemblyDirectory))
                     {
-                        resolver.AddSearchDirectory(referenceAssemblyDirectory);
+                        resolver.AddSearchDirectory(
+                            referenceAssemblyDirectory);
+                    }
+
+                    string referencePackDirectory =
+                        ReferenceAssemblyManager
+                            .GetReferencePackDirectory();
+
+                    if (!string.IsNullOrEmpty(
+                            referencePackDirectory) &&
+                        Directory.Exists(
+                            referencePackDirectory))
+                    {
+                        resolver.AddSearchDirectory(
+                            referencePackDirectory);
+
+                        Logger.APILogger.Log(
+                            "IL Ref Cecil search path: " +
+                            referencePackDirectory);
                     }
 
                     CachedReferenceStream =
@@ -721,19 +741,22 @@ namespace Modding
             }
 
             int converted = 0;
-
             int invalidOpcodeCount = 0;
 
             foreach (Instruction instruction
-                in targetMethod.Body.Instructions)
+                     in targetMethod.Body.Instructions)
             {
+                if (instruction == null ||
+                    instruction.OpCode == null)
+                {
+                    invalidOpcodeCount++;
+                    continue;
+                }
+
                 if (instruction.OpCode.Code != Code.Call)
                 {
                     continue;
                 }
-
-                if (instruction.OpCode == null)
-                    invalidOpcodeCount++;
 
                 MethodReference calledMethod =
                     instruction.Operand as MethodReference;
@@ -751,13 +774,16 @@ namespace Modding
                 }
 
                 // Static methods must remain CALL.
-                if (calledMethod.HasThis == false)
+                if (!calledMethod.HasThis)
                 {
                     continue;
                 }
 
-                // Only normalize calls to methods belonging to the
-                // same declaring type as the target method.
+                if (calledMethod.DeclaringType == null)
+                {
+                    continue;
+                }
+
                 if (calledMethod.DeclaringType.FullName !=
                     declaringType.FullName)
                 {
@@ -771,8 +797,8 @@ namespace Modding
             }
 
             Logger.APILogger.Log(
-            "IL Hook invalid opcode count: " +
-            invalidOpcodeCount);
+                "IL Hook invalid opcode count: " +
+                invalidOpcodeCount);
 
             if (converted > 0)
             {
@@ -871,6 +897,23 @@ namespace Modding
 
             try
             {
+                if (originalMethod == null)
+                {
+                    Logger.APILogger.LogError(
+                        "IL Hook CreateGhostDll originalMethod is null.");
+
+                    return null;
+                }
+
+                if (modifiedCecilMethod == null ||
+                    modifiedCecilMethod.Body == null)
+                {
+                    Logger.APILogger.LogError(
+                        "IL Hook CreateGhostDll modified Cecil method/body is null.");
+
+                    return null;
+                }
+
                 AssemblyNameDefinition assemblyName =
                     new AssemblyNameDefinition(
                         "ILHookGhost_" +
@@ -921,6 +964,8 @@ namespace Modding
                     ns +
                     "." +
                     generatedDelegateTypeName;
+
+                // Replacement delegate
 
                 TypeDefinition replacementDelegate =
                     new TypeDefinition(
@@ -1021,6 +1066,8 @@ namespace Modding
                 replacementDelegate.Methods.Add(
                     delegateInvoke);
 
+                // Ghost type / method
+
                 TypeDefinition ghostType =
                     new TypeDefinition(
                         ns,
@@ -1054,8 +1101,8 @@ namespace Modding
                 }
 
                 ghostMethod.Body =
-            new Mono.Cecil.Cil.MethodBody(
-                ghostMethod);
+                    new Mono.Cecil.Cil.MethodBody(
+                        ghostMethod);
 
                 ghostMethod.Body.InitLocals =
                     modifiedCecilMethod.Body.InitLocals;
@@ -1064,6 +1111,8 @@ namespace Modding
                     Math.Max(
                         modifiedCecilMethod.Body.MaxStackSize,
                         8);
+
+                // Locals
 
                 Dictionary<
                     VariableDefinition,
@@ -1087,6 +1136,8 @@ namespace Modding
                         ghostLocal;
                 }
 
+                // Parameters
+
                 Dictionary<
                     ParameterDefinition,
                     ParameterDefinition> parameterMap =
@@ -1106,11 +1157,27 @@ namespace Modding
                         1 +
                         (originalMethod.IsStatic ? 0 : 1);
 
+                    if (ghostIndex < 0 ||
+                        ghostIndex >= ghostMethod.Parameters.Count)
+                    {
+                        Logger.APILogger.LogError(
+                            "IL Hook parameter mapping failed for parameter " +
+                            i +
+                            ". Ghost index=" +
+                            ghostIndex +
+                            ", ghost parameter count=" +
+                            ghostMethod.Parameters.Count);
+
+                        return null;
+                    }
+
                     parameterMap[
                         originalParameters[i]] =
                         ghostMethod.Parameters[
                             ghostIndex];
                 }
+
+                // Instructions
 
                 Dictionary<
                     Instruction,
@@ -1122,71 +1189,100 @@ namespace Modding
                 ILProcessor processor =
                     ghostMethod.Body.GetILProcessor();
 
+                // First Pass
+
                 foreach (Instruction originalInstruction
                          in modifiedCecilMethod.Body.Instructions)
                 {
+                    if (originalInstruction == null)
+                    {
+                        continue;
+                    }
+
+                    OpCode opcode =
+                        originalInstruction.OpCode;
+
                     Instruction clone;
 
-                    int? argumentIndex =
-                        GetArgumentIndex(
-                            originalInstruction);
-
-                    if (argumentIndex.HasValue &&
-                        IsArgumentInstruction(
-                            originalInstruction.OpCode))
+                    if (opcode == null)
                     {
-                        int originalArg =
-                            argumentIndex.Value;
-
-                        int ghostArg;
-
-                        if (originalMethod.IsStatic)
-                        {
-                            // ghost[0] = orig
-                            // original[0] = ghost[1]
-                            ghostArg =
-                                originalArg + 1;
-                        }
-                        else
-                        {
-                            // ghost[0] = orig
-                            // ghost[1] = self
-                            // original[0] = self
-                            if (originalArg == 0 &&
-                                IsThisArgumentInstruction(
-                                    originalInstruction.OpCode))
-                            {
-                                ghostArg = 1;
-                            }
-                            else
-                            {
-                                ghostArg =
-                                    originalArg + 2;
-                            }
-                        }
+                        Logger.APILogger.LogWarn(
+                            "IL Hook null opcode at IL_" +
+                            originalInstruction.Offset.ToString("X4") +
+                            ". Replacing with NOP.");
 
                         clone =
-                            CreateMappedArgumentInstruction(
-                                originalInstruction,
-                                ghostMethod.Parameters[
-                                    ghostArg]);
+                            Instruction.Create(
+                                OpCodes.Nop);
                     }
                     else
                     {
-                        OpCode opcode = originalInstruction.OpCode;
+                        int? argumentIndex =
+                            GetArgumentIndex(
+                                originalInstruction);
 
-                        if (opcode == null)
+                        if (argumentIndex.HasValue &&
+                            IsArgumentInstruction(opcode))
                         {
-                            Logger.APILogger.LogWarn(
-                                "IL Hook invalid instruction opcode at " +
-                                originalInstruction.Offset +
-                                ". Replacing with NOP.");
+                            int originalArg =
+                                argumentIndex.Value;
 
-                            clone = Instruction.Create(OpCodes.Nop);
+                            int ghostArg;
+
+                            if (originalMethod.IsStatic)
+                            {
+                                ghostArg =
+                                    originalArg + 1;
+                            }
+                            else
+                            {
+                                if (originalArg == 0 &&
+                                    IsThisArgumentInstruction(
+                                        opcode))
+                                {
+                                    ghostArg =
+                                        1;
+                                }
+                                else
+                                {
+                                    ghostArg =
+                                        originalArg + 2;
+                                }
+                            }
+
+                            if (ghostArg < 0 ||
+                                ghostArg >= ghostMethod.Parameters.Count)
+                            {
+                                Logger.APILogger.LogError(
+                                    "IL Hook argument mapping failed at IL_" +
+                                    originalInstruction.Offset.ToString("X4") +
+                                    ". Original argument=" +
+                                    originalArg +
+                                    ", ghost argument=" +
+                                    ghostArg +
+                                    ", parameter count=" +
+                                    ghostMethod.Parameters.Count);
+
+                                return null;
+                            }
+
+                            clone =
+                                CreateMappedArgumentInstruction(
+                                    originalInstruction,
+                                    ghostMethod.Parameters[
+                                        ghostArg]);
                         }
                         else
                         {
-                            clone = Instruction.Create(opcode);
+                            clone =
+                                Instruction.Create(
+                                    OpCodes.Nop);
+
+                            clone.OpCode =
+                                opcode;
+
+                            clone.Operand =
+                                null;
                         }
                     }
 
@@ -1194,21 +1290,39 @@ namespace Modding
                         originalInstruction] =
                         clone;
 
-                    processor.Append(clone);
+                    processor.Append(
+                        clone);
                 }
+
+                // Second Pass
 
                 foreach (Instruction originalInstruction
                          in modifiedCecilMethod.Body.Instructions)
                 {
+                    if (originalInstruction == null ||
+                        originalInstruction.OpCode == null)
+                    {
+                        continue;
+                    }
+
                     if (IsArgumentInstruction(
                             originalInstruction.OpCode))
                     {
                         continue;
                     }
 
-                    Instruction clone =
-                        instructionMap[
-                            originalInstruction];
+                    Instruction clone;
+
+                    if (!instructionMap.TryGetValue(
+                            originalInstruction,
+                            out clone))
+                    {
+                        Logger.APILogger.LogError(
+                            "IL Hook instruction map missing instruction at IL_" +
+                            originalInstruction.Offset.ToString("X4"));
+
+                        return null;
+                    }
 
                     clone.Operand =
                         ImportOperand(
@@ -1218,6 +1332,8 @@ namespace Modding
                             localMap,
                             instructionMap);
                 }
+
+                // Exception handlers
 
                 foreach (ExceptionHandler oldHandler
                          in modifiedCecilMethod.Body.ExceptionHandlers)
@@ -1267,10 +1383,13 @@ namespace Modding
                         newHandler);
                 }
 
+                // Write assembly
+
                 using (MemoryStream stream =
                        new MemoryStream())
                 {
-                    assembly.Write(stream);
+                    assembly.Write(
+                        stream);
 
                     byte[] result =
                         stream.ToArray();
@@ -1415,18 +1534,15 @@ namespace Modding
         }
 
         private static bool IsThisArgumentInstruction(
-            OpCode opcode)
+    OpCode opcode)
         {
-            switch (opcode.Code)
+            if (opcode == null)
             {
-                case Code.Ldarg_0:
-                case Code.Ldarga:
-                case Code.Ldarga_S:
-                    return true;
-
-                default:
-                    return false;
+                return false;
             }
+
+            return opcode.Code ==
+                Code.Ldarg_0;
         }
 
         private static int? GetArgumentIndex(

@@ -106,44 +106,60 @@ namespace Modding
             patched = false;
             try
             {
-                using var input = new MemoryStream(assemblyBytes);
-                DefaultAssemblyResolver resolver =
-                CreateMobileCecilResolver(assemblyPath);
+                using (var input = new MemoryStream(assemblyBytes))
+                {
+                    DefaultAssemblyResolver resolver = new DefaultAssemblyResolver();
 
-                Mono.Cecil.ReaderParameters readerParameters =
-                    new Mono.Cecil.ReaderParameters
+                    string assemblyDirectory = Path.GetDirectoryName(assemblyPath);
+                    if (!string.IsNullOrEmpty(assemblyDirectory))
+                    {
+                        resolver.AddSearchDirectory(assemblyDirectory);
+                    }
+
+                    string apiDirectory = ReferenceAssemblyManager.GetReferenceDirectory();
+                    if (!string.IsNullOrEmpty(apiDirectory) && Directory.Exists(apiDirectory))
+                    {
+                        resolver.AddSearchDirectory(apiDirectory);
+                    }
+
+                    string referenceDirectory = ReferenceAssemblyManager.GetReferencePackDirectory();
+                    if (!string.IsNullOrEmpty(referenceDirectory) && Directory.Exists(referenceDirectory))
+                    {
+                        resolver.AddSearchDirectory(referenceDirectory);
+                    }
+
+                    Mono.Cecil.ReaderParameters readerParameters = new Mono.Cecil.ReaderParameters
                     {
                         InMemory = true,
                         ReadSymbols = false,
                         AssemblyResolver = resolver
                     };
 
-                Mono.Cecil.AssemblyDefinition assembly =
-                    Mono.Cecil.AssemblyDefinition.ReadAssembly(
-                        input,
-                        readerParameters);
+                    Mono.Cecil.AssemblyDefinition assembly = Mono.Cecil.AssemblyDefinition.ReadAssembly(input, readerParameters);
 
-                var targetReference = assembly.MainModule.AssemblyReferences
-                    .FirstOrDefault(r => string.Equals(r.Name, "MonoMod.RuntimeDetour", StringComparison.OrdinalIgnoreCase));
+                    var targetReference = assembly.MainModule.AssemblyReferences
+                        .FirstOrDefault(r => string.Equals(r.Name, "MonoMod.RuntimeDetour", StringComparison.OrdinalIgnoreCase));
 
-                if (targetReference == null)
-                {
-                    Logger.APILogger.Log($"MonoMod.RuntimeDetour reference not found: {assemblyPath}");
-                    return assemblyBytes;
+                    if (targetReference == null)
+                    {
+                        Logger.APILogger.Log($"MonoMod.RuntimeDetour reference not found: {assemblyPath}");
+                        return assemblyBytes;
+                    }
+
+                    AssemblyName apiName = typeof(AssemblyLoader).Assembly.GetName();
+                    Logger.APILogger.Log($"Redirecting MonoMod.RuntimeDetour in {assemblyPath} -> {apiName.Name}, Version={apiName.Version}");
+
+                    targetReference.Name = apiName.Name;
+                    targetReference.Version = apiName.Version;
+                    targetReference.PublicKeyToken = apiName.GetPublicKeyToken();
+
+                    using (var output = new MemoryStream())
+                    {
+                        assembly.Write(output);
+                        patched = true;
+                        return output.ToArray();
+                    }
                 }
-
-                AssemblyName apiName = typeof(AssemblyLoader).Assembly.GetName();
-                Logger.APILogger.Log($"Redirecting MonoMod.RuntimeDetour in {assemblyPath} -> {apiName.Name}, Version={apiName.Version}");
-
-                targetReference.Name = apiName.Name;
-                targetReference.Version = apiName.Version;
-                targetReference.PublicKeyToken = apiName.GetPublicKeyToken();
-
-                using var output = new MemoryStream();
-                assembly.Write(output);
-
-                patched = true;
-                return output.ToArray();
             }
             catch (Exception ex)
             {
@@ -151,6 +167,7 @@ namespace Modding
                 return assemblyBytes;
             }
         }
+
 
         private static DefaultAssemblyResolver
     CreateMobileCecilResolver(string assemblyPath)

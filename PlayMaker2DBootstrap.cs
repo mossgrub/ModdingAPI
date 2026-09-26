@@ -1,6 +1,7 @@
 using System;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using HutongGames.PlayMaker;
 
 namespace Modding
 {
@@ -119,8 +120,7 @@ namespace Modding
             }
         }
 
-        private static void EnsureScene(
-            Scene scene)
+        private static void EnsureScene(Scene scene)
         {
             if (!scene.IsValid())
                 return;
@@ -169,6 +169,8 @@ namespace Modding
                 UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(
                     instance,
                     scene);
+                
+                PreprocessPlayMakerFsms(instance);
 
                 Logger.APILogger.Log(
                     "PlayMaker2D instantiated PlayMaker Unity 2D " +
@@ -214,8 +216,7 @@ namespace Modding
             return null;
         }
 
-        private static bool HasExistingInstance(
-            Scene scene)
+        private static bool HasExistingInstance(Scene scene)
         {
             try
             {
@@ -263,6 +264,68 @@ namespace Modding
             }
 
             return false;
+        }
+
+        private static void PreprocessPlayMakerFsms(GameObject root)
+        {
+            if (root == null)
+                return;
+
+            try
+            {
+                PlayMakerFSM[] fsms =
+                    root.GetComponentsInChildren<
+                        PlayMakerFSM>(
+                            true);
+
+                if (fsms == null)
+                    return;
+
+                int processed = 0;
+
+                for (int i = 0;
+                     i < fsms.Length;
+                     i++)
+                {
+                    PlayMakerFSM fsm =
+                        fsms[i];
+
+                    if (fsm == null)
+                        continue;
+
+                    try
+                    {
+                        fsm.Preprocess();
+
+                        processed++;
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.APILogger.LogWarn(
+                            "Play Maker failed to preprocess FSM `" +
+                            fsm.FsmName +
+                            "` on `" +
+                            fsm.gameObject.name +
+                            "`: " +
+                            ex.Message);
+                    }
+                }
+
+                Logger.APILogger.Log(
+                    "Play Maker preprocessed " +
+                    processed +
+                    "/" +
+                    fsms.Length +
+                    " FSM(s) on `" +
+                    root.name +
+                    "`.");
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogWarn(
+                    "Play Maker FSM preprocessing failed: " +
+                    ex);
+            }
         }
     }
 }

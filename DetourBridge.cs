@@ -1024,7 +1024,7 @@ namespace Modding
 
             try
             {
-                int argLen = args != null ? args.Length: 0;
+                int argLen = args != null ? args.Length : 0;
 
                 if (argLen > 0 &&
                     st.RefIndexes != null)
@@ -1110,7 +1110,17 @@ namespace Modding
                             try
                             {
                                 object r = st.Handlers[i].DynamicInvoke(full);
-                                if (r is R rr) { result = rr; invoked = true; }
+
+                                if (TryConvertBridgeReturn(
+                                        st,
+                                        r,
+                                        out R converted))
+                                {
+                                    result =
+                                        converted;
+
+                                    invoked = true;
+                                }
                             }
                             catch (Exception ex)
                             {
@@ -1125,7 +1135,17 @@ namespace Modding
                         try
                         {
                             object r = st.Replacement.DynamicInvoke(full);
-                            if (r is R rr) { result = rr; invoked = true; }
+
+                            if (TryConvertBridgeReturn(
+                                    st,
+                                    r,
+                                    out R converted))
+                            {
+                                result =
+                                    converted;
+
+                                invoked = true;
+                            }
                         }
                         catch (Exception ex)
                         {
@@ -1147,6 +1167,48 @@ namespace Modding
             }
         }
 
+        private static bool TryConvertBridgeReturn<R>(
+            BridgeState st,
+            object value,
+            out R result)
+        {
+            result = default(R);
+
+            if (st == null ||
+                st.Target == null)
+            {
+                return false;
+            }
+
+            Type returnType =
+                st.Target.ReturnType;
+
+            // Reference types are represented as IntPtr in the native bridge.
+            if (typeof(R) == typeof(IntPtr) &&
+                IsRefTypeForBridge(returnType))
+            {
+                IntPtr ptr =
+                    value == null
+                        ? IntPtr.Zero
+                        : NativeBridge.ObjectToPtr(
+                            value);
+
+                result =
+                    (R)(object)ptr;
+
+                return true;
+            }
+
+            if (value is R)
+            {
+                result =
+                    (R)value;
+
+                return true;
+            }
+
+            return false;
+        }
 
         internal static IntPtr InvokeBridgePtr<TSlot>(object[] args)
         {
