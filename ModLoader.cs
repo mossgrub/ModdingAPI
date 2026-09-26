@@ -174,8 +174,14 @@ namespace Modding
 				Logger.APILogger.LogError(message);
 			}
 
-			HybridCLRInitializer.Initialize();
-
+			try
+			{
+				HybridCLRInitializer.Initialize();
+			}
+			catch (Exception ex)
+			{
+				Logger.APILogger.LogError($"HybridCLR.Initialize failed: {ex}");
+			}
 			try
 			{
 				AssemblyLoader.Initialize();

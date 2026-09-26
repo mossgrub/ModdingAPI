@@ -45,19 +45,9 @@ namespace Modding
         public bool ShortLoggingLevel;
 
         /// <summary>
-        ///     Creates a native log file in the persistent data path for logging modding native lib.
-        /// </summary>
-        public bool NativeLogging = false;
-
-        /// <summary>
         ///     Determines if the logs should have a timestamp attached to each line of logging.
         /// </summary>
         public bool IncludeTimestamps;
-
-        /// <summary>
-        /// Enables the native GameObject component compatibility hooks.
-        /// </summary>
-        public bool ComponentHook = false;
 
         /// <summary>
         /// Enables the PlayMaker2D bootstrap prefab to be loaded into the scene

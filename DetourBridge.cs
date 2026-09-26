@@ -214,10 +214,10 @@ namespace Modding
                         gmAddr = GetNativeMethodAddress(gm);
                     }
                 }
-                // catch (Exception ex)
-                // {
-                //     Logger.APILogger.LogDebug("GameManager.Awake lookup error: " + ex.Message);
-                // }
+                catch (Exception ex)
+                {
+                    // Logger.APILogger.LogDebug("GameManager.Awake lookup error: " + ex.Message);
+                }
                 // Logger.APILogger.Log(
                 //     "GameManager.Awake GetFunctionPointer=0x" + gmFp.ToInt64().ToString("X") +
                 //     " resolved=0x" + gmAddr.ToInt64().ToString("X"));

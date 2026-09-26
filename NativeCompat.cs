@@ -26,19 +26,13 @@ namespace Modding
             {
                 return;
             }
-
-            if (ModHooks.GlobalSettings.NativeLogging)
-            {
-                NativeBridge.EnsureReady();
-            }
+            
+            NativeBridge.EnsureReady();
 
             InstallHookEndpointRedirect();
 
-            if (ModHooks.GlobalSettings.ComponentHook)
-            {
-                NativeBridge.EnsureAddComponentHook();
-                NativeBridge.EnsureGameObjectCtorHook();
-            }
+            NativeBridge.EnsureAddComponentHook();
+            NativeBridge.EnsureGameObjectCtorHook();
 
             LogILHookProvider();
         }
