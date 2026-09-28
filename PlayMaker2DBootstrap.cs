@@ -39,7 +39,7 @@ namespace Modding
             {
                 InstallPlayMakerAwakeHook();
 
-                SceneManager.sceneLoaded +=
+                UnityEngine.SceneManagement.SceneManager.sceneLoaded +=
                     OnSceneLoaded;
 
                 EnsureCurrentScene();
@@ -57,7 +57,7 @@ namespace Modding
 
                 try
                 {
-                    SceneManager.sceneLoaded -=
+                    UnityEngine.SceneManagement.SceneManager.sceneLoaded -=
                         OnSceneLoaded;
                 }
                 catch
@@ -75,7 +75,7 @@ namespace Modding
 
             try
             {
-                SceneManager.sceneLoaded -=
+                UnityEngine.SceneManagement.SceneManager.sceneLoaded -=
                     OnSceneLoaded;
             }
             catch
@@ -114,7 +114,8 @@ namespace Modding
                 }
 
                 Delegate replacement =
-                    (OrigPlayMakerAwake)PlayMakerAwakeHook;
+                    (Action<OrigPlayMakerAwake, PlayMakerFSM>)
+                        PlayMakerAwakeHook;
 
                 Delegate trampoline;
 
@@ -192,7 +193,7 @@ namespace Modding
             try
             {
                 Scene scene =
-                    SceneManager.GetActiveScene();
+                    UnityEngine.SceneManagement.SceneManager.GetActiveScene();
 
                 if (!scene.IsValid() ||
                     !scene.isLoaded)
@@ -249,7 +250,7 @@ namespace Modding
                 instance.name =
                     InstanceName;
 
-                SceneManager.MoveGameObjectToScene(
+                UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(
                     instance,
                     scene);
 
@@ -355,7 +356,7 @@ namespace Modding
             try
             {
                 Scene activeScene =
-                    SceneManager.GetActiveScene();
+                    UnityEngine.SceneManagement.SceneManager.GetActiveScene();
 
                 if (!activeScene.IsValid() ||
                     !activeScene.isLoaded)

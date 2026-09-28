@@ -845,7 +845,6 @@ namespace Modding
             ParameterInfo[] parameters =
                 st.Target.GetParameters();
 
-            // Instance method
             if (st.InstanceCall)
             {
                 if (argIndex == 0)
@@ -859,13 +858,14 @@ namespace Modding
                 if (parameterIndex >= 0 &&
                     parameterIndex < parameters.Length)
                 {
-                    return parameters[parameterIndex].ParameterType;
+                    return parameters[
+                        parameterIndex].ParameterType;
                 }
 
                 return null;
             }
 
-            // Static method
+            // Static method.
             if (argIndex >= 0 &&
                 argIndex < parameters.Length)
             {
@@ -873,6 +873,93 @@ namespace Modding
             }
 
             return null;
+        }
+
+        private sealed class ParameterlessInvoker
+        {
+            public MethodInfo Replacement;
+
+            public void Invoke(IntPtr self)
+            {
+                try
+                {
+                    Replacement.Invoke(null, null);
+                }
+                catch (TargetInvocationException tie)
+                {
+                    if (tie.InnerException != null) throw tie.InnerException;
+                    throw;
+                }
+            }
+        }
+
+        private static readonly MethodInfo ParameterlessInvokerMethod =
+            typeof(ParameterlessInvoker).GetMethod(
+                nameof(ParameterlessInvoker.Invoke),
+                BindingFlags.Public | BindingFlags.Instance);
+
+        public static Delegate CreateParameterlessBridge(MethodInfo targetMethod, MethodInfo replacementMethod)
+        {
+            if (targetMethod == null) throw new ArgumentNullException(nameof(targetMethod));
+            if (replacementMethod == null) throw new ArgumentNullException(nameof(replacementMethod));
+
+            ParameterlessInvoker invoker = new ParameterlessInvoker
+            {
+                Replacement = replacementMethod
+            };
+
+            return Delegate.CreateDelegate(
+                typeof(DetourAction<IntPtr>),
+                invoker,
+                ParameterlessInvokerMethod);
+        }
+
+        public static Delegate HookWithParameterlessDelegate(MethodInfo targetMethod, Delegate bridgeDelegate)
+        {
+            if (!_dobbyAvailable) return null;
+            if (targetMethod == null || bridgeDelegate == null) return null;
+
+            IntPtr targetAddr = GetNativeMethodAddress(targetMethod);
+            if (targetAddr == IntPtr.Zero) return null;
+
+            IntPtr bridgeAddr = Marshal.GetFunctionPointerForDelegate(bridgeDelegate);
+            if (bridgeAddr == IntPtr.Zero) return null;
+
+            if (targetAddr == bridgeAddr) return null;
+
+            IntPtr trampPtr;
+            try
+            {
+                DobbyHookNative(targetAddr, bridgeAddr, out trampPtr);
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogError("DobbyHook failed for " + targetMethod.Name + ": " + ex.Message);
+                return null;
+            }
+
+            if (trampPtr == IntPtr.Zero) return null;
+
+            Delegate trampolineDelegate;
+            try
+            {
+                trampolineDelegate = Marshal.GetDelegateForFunctionPointer(
+                    trampPtr,
+                    typeof(DetourAction<IntPtr>));
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogError("Failed to create trampoline delegate for " + targetMethod.Name + ": " + ex.Message);
+                return null;
+            }
+
+            Installed[targetMethod] = new InstalledHook
+            {
+                Target = targetMethod,
+                Orig = trampolineDelegate
+            };
+
+            return trampolineDelegate;
         }
 
         internal static void InvokeBridge<TSlot>(object[] args)
@@ -905,45 +992,67 @@ namespace Modding
             try
             {
                 int argLen = args != null ? args.Length : 0;
-                if (argLen > 0 && st.RefIndexes != null)
+                if (argLen > 0 &&
+                    st.RefIndexes != null)
                 {
-                    for (int i = 0; i < st.RefIndexes.Length; i++)
+                    for (int i = 0;
+                         i < st.RefIndexes.Length;
+                         i++)
                     {
-                        int ri = st.RefIndexes[i];
-                        if (ri >= 0 && ri < argLen && args[ri] is IntPtr p)
+                        int ri =
+                            st.RefIndexes[i];
+
+                        if (ri < 0 ||
+                            ri >= argLen)
                         {
-                            try
-                            {
-                                Type expectedType =
-                                GetBridgeArgumentType(st, ri);
+                            continue;
+                        }
 
-                                args[ri] =
-                                    p == IntPtr.Zero
-                                        ? null
-                                        : NativeBridge.FromObjectPtr(
-                                            p,
-                                            expectedType);
+                        if (!(args[ri] is IntPtr))
+                        {
+                            continue;
+                        }
 
-                                args[ri] =
-                                    managedObject;
+                        IntPtr p =
+                            (IntPtr)args[ri];
 
-                                if (ri == 0 &&
-                                    st.InstanceCall)
-                                {
-                                    Logger.APILogger.LogDebug(
-                                        "Self conversion: " +
-                                        st.Target.DeclaringType?.FullName +
-                                        " -> " +
-                                        (managedObject == null
-                                            ? "<NULL>"
-                                            : managedObject.GetType().FullName));
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                Logger.APILogger.LogError($"Failed to convert pointer in argument {ri}: {ex.Message}");
-                                args[ri] = null;
-                            }
+                        if (p == IntPtr.Zero)
+                        {
+                            args[ri] = null;
+                            continue;
+                        }
+
+                        try
+                        {
+                            Type expectedType =
+                                GetBridgeArgumentType(
+                                    st,
+                                    ri);
+
+                            args[ri] =
+                                NativeBridge.FromObjectPtr(
+                                    p,
+                                    expectedType);
+
+                            Logger.APILogger.LogDebug(
+                                "Self/argument conversion: " +
+                                (expectedType != null
+                                    ? expectedType.FullName
+                                    : "<unknown>") +
+                                " -> " +
+                                (args[ri] != null
+                                    ? args[ri].GetType().FullName
+                                    : "<NULL>"));
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.APILogger.LogError(
+                                "Failed to convert pointer in argument " +
+                                ri +
+                                ": " +
+                                ex);
+
+                            args[ri] = null;
                         }
                     }
                 }
@@ -1096,7 +1205,6 @@ namespace Modding
             try
             {
                 int argLen = args != null ? args.Length : 0;
-
                 if (argLen > 0 &&
                     st.RefIndexes != null)
                 {
@@ -1121,40 +1229,31 @@ namespace Modding
                         IntPtr p =
                             (IntPtr)args[ri];
 
+                        if (p == IntPtr.Zero)
+                        {
+                            args[ri] = null;
+                            continue;
+                        }
+
                         try
                         {
                             Type expectedType =
-                            GetBridgeArgumentType(st, ri);
+                                GetBridgeArgumentType(
+                                    st,
+                                    ri);
 
                             args[ri] =
-                                p == IntPtr.Zero
-                                    ? null
-                                    : NativeBridge.FromObjectPtr(
-                                        p,
-                                        expectedType);
-
-                            args[ri] =
-                                managedObject;
-
-                            if (ri == 0 &&
-                                st.InstanceCall)
-                            {
-                                Logger.APILogger.LogDebug(
-                                    "Self conversion: " +
-                                    st.Target.DeclaringType?.FullName +
-                                    " -> " +
-                                    (managedObject == null
-                                        ? "<NULL>"
-                                        : managedObject.GetType().FullName));
-                            }
+                                NativeBridge.FromObjectPtr(
+                                    p,
+                                    expectedType);
                         }
                         catch (Exception ex)
                         {
                             Logger.APILogger.LogError(
-                                "Failed to convert pointer in argument " +
+                                "Failed to convert pointer in returning bridge argument " +
                                 ri +
                                 ": " +
-                                ex.Message);
+                                ex);
 
                             args[ri] = null;
                         }

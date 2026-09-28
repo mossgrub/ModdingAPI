@@ -38,6 +38,16 @@ namespace MonoMod.RuntimeDetour
             if (replacement == null) throw new ArgumentNullException(nameof(replacement));
             if (original is MethodInfo mi)
             {
+                if (!mi.IsStatic
+                    && mi.ReturnType == typeof(void)
+                    && mi.GetParameters().Length == 0
+                    && replacement.IsStatic
+                    && replacement.ReturnType == typeof(void)
+                    && replacement.GetParameters().Length == 0)
+                {
+                    return DetourBridge.CreateParameterlessBridge(mi, replacement);
+                }
+
                 Type dt = DetourBridge.GetDelegateTypeForMethod(mi);
                 if (dt != null) return Delegate.CreateDelegate(dt, replacement);
                 throw new NotSupportedException("Unsupported target signature: " + mi.Name);
@@ -99,32 +109,38 @@ namespace MonoMod.RuntimeDetour
             RemoveCurrent();
 
 #if ENABLE_IL2CPP
-            if (DetourBridge.IsAvailable)
+    if (DetourBridge.IsAvailable)
+    {
+        if (IsOrigPattern(_replacement))
+        {
+            if (DetourBridge.TryCreateOrigDetour(_original, _replacement, out Delegate tramp, out string err))
             {
-                if (IsOrigPattern(_replacement))
-                {
-                    if (DetourBridge.TryCreateOrigDetour(_original, _replacement, out Delegate tramp, out string err))
-                    {
-                        _originalDelegate = tramp;
-                    }
-                    else
-                    {
-                        Logger.APILogger.LogWarn("Orig detour for " + _original.Name + " failed: " + err);
-                    }
-                }
-                else
-                {
-                    _originalDelegate = DetourBridge.CreateDetour(_original, _replacement.Method);
-                    if (_originalDelegate == null)
-                        Logger.APILogger.LogWarn("Direct detour for " + _original.Name + " failed.");
-                }
+                _originalDelegate = tramp;
             }
             else
             {
-                Logger.APILogger.LogWarn("Detour for " + _original.Name + " will not be applied on IL2CPP.");
+                Logger.APILogger.LogWarn("Orig detour for " + _original.Name + " failed: " + err);
             }
+        }
+        else if (_replacement is DetourBridge.DetourAction<IntPtr>)
+        {
+            _originalDelegate = DetourBridge.HookWithParameterlessDelegate(_original, _replacement);
+            if (_originalDelegate == null)
+                Logger.APILogger.LogWarn("Parameterless detour for " + _original.Name + " failed.");
+        }
+        else
+        {
+            _originalDelegate = DetourBridge.CreateDetour(_original, _replacement.Method);
+            if (_originalDelegate == null)
+                Logger.APILogger.LogWarn("Direct detour for " + _original.Name + " failed.");
+        }
+    }
+    else
+    {
+        Logger.APILogger.LogWarn("Detour for " + _original.Name + " will not be applied on IL2CPP.");
+    }
 #else
-            ApplyMonoDetour();
+    ApplyMonoDetour();
 #endif
         }
 
