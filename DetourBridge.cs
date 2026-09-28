@@ -832,6 +832,49 @@ namespace Modding
             }
         }
 
+        private static Type GetBridgeArgumentType(
+            BridgeState st,
+            int argIndex)
+        {
+            if (st == null ||
+                st.Target == null)
+            {
+                return null;
+            }
+
+            ParameterInfo[] parameters =
+                st.Target.GetParameters();
+
+            // Instance method
+            if (st.InstanceCall)
+            {
+                if (argIndex == 0)
+                {
+                    return st.Target.DeclaringType;
+                }
+
+                int parameterIndex =
+                    argIndex - 1;
+
+                if (parameterIndex >= 0 &&
+                    parameterIndex < parameters.Length)
+                {
+                    return parameters[parameterIndex].ParameterType;
+                }
+
+                return null;
+            }
+
+            // Static method
+            if (argIndex >= 0 &&
+                argIndex < parameters.Length)
+            {
+                return parameters[argIndex].ParameterType;
+            }
+
+            return null;
+        }
+
         internal static void InvokeBridge<TSlot>(object[] args)
         {
             LogBridgeFirstInvoke(typeof(TSlot));
@@ -872,11 +915,9 @@ namespace Modding
                             try
                             {
                                 Type expectedType =
-                                GetManagedBridgeArgumentType(
-                                st.Target,
-                                ri);
+                                GetBridgeArgumentType(st, ri);
 
-                                object managedObject =
+                                args[ri] =
                                     p == IntPtr.Zero
                                         ? null
                                         : NativeBridge.FromObjectPtr(
@@ -912,6 +953,36 @@ namespace Modding
                 if (argLen > 0)
                 {
                     Array.Copy(args, 0, full, 1, argLen);
+                }
+
+                // if the native object exists but we could not reconstruct
+                // the managed Unity object, never block the original game method.
+                if (st.InstanceCall &&
+                    rawSelf != IntPtr.Zero &&
+                    args != null &&
+                    args.Length > 0 &&
+                    args[0] == null)
+                {
+                    Logger.APILogger.LogWarn(
+                        "Managed self conversion failed for " +
+                        st.Target.Name +
+                        ". Calling original method directly using native self 0x" +
+                        rawSelf.ToInt64().ToString("X"));
+
+                    try
+                    {
+                        st.Orig.DynamicInvoke(full);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.APILogger.LogError(
+                            "Original fallback failed for " +
+                            st.Target.Name +
+                            ": " +
+                            ex);
+                    }
+
+                    return;
                 }
 
                 lock (st.Handlers)
@@ -1053,11 +1124,9 @@ namespace Modding
                         try
                         {
                             Type expectedType =
-                                GetManagedBridgeArgumentType(
-                                    st.Target,
-                                    ri);
+                            GetBridgeArgumentType(st, ri);
 
-                            object managedObject =
+                            args[ri] =
                                 p == IntPtr.Zero
                                     ? null
                                     : NativeBridge.FromObjectPtr(
@@ -1096,6 +1165,42 @@ namespace Modding
                 if (argLen > 0)
                 {
                     Array.Copy(args, 0, full, 1, argLen);
+                }
+
+                if (st.InstanceCall &&
+                    rawSelf != IntPtr.Zero &&
+                    args != null &&
+                    args.Length > 0 &&
+                    args[0] == null)
+                {
+                    Logger.APILogger.LogWarn(
+                        "Managed self conversion failed for " +
+                        st.Target.Name +
+                        ". Calling original return method directly.");
+
+                    try
+                    {
+                        object originalResult =
+                            st.Orig.DynamicInvoke(full);
+
+                        if (TryConvertBridgeReturn(
+                            st,
+                            originalResult,
+                            out R fallbackResult))
+                        {
+                            return fallbackResult;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.APILogger.LogError(
+                            "Original return fallback failed for " +
+                            st.Target.Name +
+                            ": " +
+                            ex);
+                    }
+
+                    return default(R);
                 }
 
                 R result = default;
@@ -1174,36 +1279,47 @@ namespace Modding
         {
             result = default(R);
 
-            if (st == null ||
-                st.Target == null)
-            {
+            if (st == null || st.Target == null)
                 return false;
-            }
 
-            Type returnType =
-                st.Target.ReturnType;
+            Type returnType = st.Target.ReturnType;
 
-            // Reference types are represented as IntPtr in the native bridge.
             if (typeof(R) == typeof(IntPtr) &&
                 IsRefTypeForBridge(returnType))
             {
-                IntPtr ptr =
-                    value == null
-                        ? IntPtr.Zero
-                        : NativeBridge.ObjectToPtr(
-                            value);
+                IntPtr ptr = IntPtr.Zero;
 
-                result =
-                    (R)(object)ptr;
+                if (value == null)
+                {
+                    ptr = IntPtr.Zero;
+                }
+                else if (value is IntPtr)
+                {
+                    ptr = (IntPtr)value;
+                }
+                else
+                {
+                    ptr = NativeBridge.ObjectToPtr(value);
+                }
 
+                result = (R)(object)ptr;
                 return true;
+            }
+
+            if (value == null)
+            {
+                if (!typeof(R).IsValueType)
+                {
+                    result = default(R);
+                    return true;
+                }
+
+                return false;
             }
 
             if (value is R)
             {
-                result =
-                    (R)value;
-
+                result = (R)value;
                 return true;
             }
 
