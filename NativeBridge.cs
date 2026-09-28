@@ -142,7 +142,7 @@ namespace Modding
         }
 
         private static IntPtr GetUnityCachedPtr(
-            UnityEngine.Object obj)
+    UnityEngine.Object obj)
         {
             if (obj == null)
             {
@@ -151,20 +151,41 @@ namespace Modding
 
             try
             {
+                MethodInfo method =
+                    GetUnityGetCachedPtrMethod();
+
+                if (method != null)
+                {
+                    object value =
+                        method.Invoke(
+                            obj,
+                            null);
+
+                    if (value is IntPtr)
+                    {
+                        return (IntPtr)value;
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            // Fallback
+            try
+            {
                 FieldInfo field =
                     GetUnityCachedPtrField();
 
-                if (field == null)
+                if (field != null)
                 {
-                    return IntPtr.Zero;
-                }
+                    object value =
+                        field.GetValue(obj);
 
-                object value =
-                    field.GetValue(obj);
-
-                if (value is IntPtr)
-                {
-                    return (IntPtr)value;
+                    if (value is IntPtr)
+                    {
+                        return (IntPtr)value;
+                    }
                 }
             }
             catch
@@ -172,6 +193,151 @@ namespace Modding
             }
 
             return IntPtr.Zero;
+        }
+
+        private static MethodInfo _unityGetCachedPtrMethod;
+        private static bool _unityGetCachedPtrMethodSearched;
+
+        private static MethodInfo GetUnityGetCachedPtrMethod()
+        {
+            if (_unityGetCachedPtrMethodSearched)
+            {
+                return _unityGetCachedPtrMethod;
+            }
+
+            _unityGetCachedPtrMethodSearched = true;
+
+            try
+            {
+                _unityGetCachedPtrMethod =
+                    typeof(UnityEngine.Object).GetMethod(
+                        "GetCachedPtr",
+                        BindingFlags.Instance |
+                        BindingFlags.NonPublic);
+            }
+            catch
+            {
+                _unityGetCachedPtrMethod = null;
+            }
+
+            return _unityGetCachedPtrMethod;
+        }
+
+        private static object TryGetStaticInstance(
+    Type expectedType)
+        {
+            if (expectedType == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                FieldInfo field =
+                    expectedType.GetField(
+                        "instance",
+                        BindingFlags.Static |
+                        BindingFlags.Public |
+                        BindingFlags.NonPublic);
+
+                if (field != null)
+                {
+                    object value =
+                        field.GetValue(null);
+
+                    if (value != null &&
+                        expectedType.IsInstanceOfType(value))
+                    {
+                        return value;
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                PropertyInfo property =
+                    expectedType.GetProperty(
+                        "instance",
+                        BindingFlags.Static |
+                        BindingFlags.Public |
+                        BindingFlags.NonPublic);
+
+                if (property != null &&
+                    property.CanRead)
+                {
+                    object value =
+                        property.GetValue(
+                            null,
+                            null);
+
+                    if (value != null &&
+                        expectedType.IsInstanceOfType(value))
+                    {
+                        return value;
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                FieldInfo field =
+                    expectedType.GetField(
+                        "Instance",
+                        BindingFlags.Static |
+                        BindingFlags.Public |
+                        BindingFlags.NonPublic);
+
+                if (field != null)
+                {
+                    object value =
+                        field.GetValue(null);
+
+                    if (value != null &&
+                        expectedType.IsInstanceOfType(value))
+                    {
+                        return value;
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                PropertyInfo property =
+                    expectedType.GetProperty(
+                        "Instance",
+                        BindingFlags.Static |
+                        BindingFlags.Public |
+                        BindingFlags.NonPublic);
+
+                if (property != null &&
+                    property.CanRead)
+                {
+                    object value =
+                        property.GetValue(
+                            null,
+                            null);
+
+                    if (value != null &&
+                        expectedType.IsInstanceOfType(value))
+                    {
+                        return value;
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return null;
         }
 
         internal static void EnsureTakeMPHook()
@@ -210,24 +376,24 @@ namespace Modding
 
         internal static IntPtr ObjectToPtr(object o) => ToObjectPtr(o);
 
-        internal static object FromObjectPtr(IntPtr ptr, Type expectedType)
+        internal static object FromObjectPtr(
+            IntPtr ptr,
+            Type expectedType)
         {
             if (ptr == IntPtr.Zero)
             {
                 return null;
             }
 
-            if (expectedType != null &&
-                typeof(UnityEngine.Object).IsAssignableFrom(
-                    expectedType))
+            if (expectedType != null)
             {
                 lock (ManagedObjectCacheLock)
                 {
                     WeakReference cached;
 
                     if (ManagedObjectCache.TryGetValue(
-                        ptr,
-                        out cached))
+                            ptr,
+                            out cached))
                     {
                         try
                         {
@@ -241,16 +407,95 @@ namespace Modding
                                 UnityEngine.Object cachedUnityObject =
                                     cachedTarget as UnityEngine.Object;
 
-                                if (cachedUnityObject != null &&
-                                    GetUnityCachedPtr(
-                                        cachedUnityObject) == ptr)
+                                if (cachedUnityObject != null)
                                 {
-                                    return cachedTarget;
+                                    IntPtr cachedPtr =
+                                        GetUnityCachedPtr(
+                                            cachedUnityObject);
+
+                                    if (cachedPtr == ptr)
+                                    {
+                                        return cachedTarget;
+                                    }
                                 }
                             }
                         }
                         catch
                         {
+                        }
+                    }
+                }
+            }
+
+            if (expectedType != null &&
+                typeof(UnityEngine.Object).IsAssignableFrom(
+                    expectedType))
+            {
+                if (expectedType == typeof(HeroController))
+                {
+                    HeroController hero =
+                        HeroController.instance;
+
+                    if (hero != null)
+                    {
+                        lock (ManagedObjectCacheLock)
+                        {
+                            ManagedObjectCache[ptr] =
+                                new WeakReference(hero);
+                        }
+
+                        return hero;
+                    }
+                }
+
+                object singleton =
+                    TryGetStaticInstance(
+                        expectedType);
+
+                if (singleton != null)
+                {
+                    UnityEngine.Object unityObject =
+                        singleton as UnityEngine.Object;
+
+                    if (unityObject != null)
+                    {
+                        IntPtr singletonPtr =
+                            GetUnityCachedPtr(
+                                unityObject);
+
+                        Logger.APILogger.LogDebug(
+                            "[OBJPTR] Singleton candidate: " +
+                            expectedType.FullName +
+                            " ptr=0x" +
+                            singletonPtr.ToInt64().ToString("X") +
+                            " native=0x" +
+                            ptr.ToInt64().ToString("X"));
+
+                        if (singletonPtr == ptr ||
+                            singletonPtr == IntPtr.Zero)
+                        {
+                            lock (ManagedObjectCacheLock)
+                            {
+                                ManagedObjectCache[ptr] =
+                                    new WeakReference(
+                                        singleton);
+                            }
+
+                            return singleton;
+                        }
+
+                        if (expectedType ==
+                            typeof(HeroController) &&
+                            singletonPtr == ptr)
+                        {
+                            lock (ManagedObjectCacheLock)
+                            {
+                                ManagedObjectCache[ptr] =
+                                    new WeakReference(
+                                        singleton);
+                            }
+
+                            return singleton;
                         }
                     }
                 }
@@ -261,39 +506,44 @@ namespace Modding
                         UnityEngine.Resources.FindObjectsOfTypeAll(
                             expectedType);
 
-                    for (int i = 0;
-                         i < objects.Length;
-                         i++)
+                    if (objects != null)
                     {
-                        UnityEngine.Object obj =
-                            objects[i];
-
-                        if (obj == null)
+                        for (int i = 0;
+                             i < objects.Length;
+                             i++)
                         {
-                            continue;
+                            UnityEngine.Object obj =
+                                objects[i];
+
+                            if (obj == null)
+                            {
+                                continue;
+                            }
+
+                            IntPtr cachedPtr =
+                                GetUnityCachedPtr(
+                                    obj);
+
+                            if (cachedPtr != ptr)
+                            {
+                                continue;
+                            }
+
+                            lock (ManagedObjectCacheLock)
+                            {
+                                ManagedObjectCache[ptr] =
+                                    new WeakReference(
+                                        obj);
+                            }
+
+                            Logger.APILogger.LogDebug(
+                                "Resolved " +
+                                expectedType.FullName +
+                                " from native pointer 0x" +
+                                ptr.ToInt64().ToString("X"));
+
+                            return obj;
                         }
-
-                        IntPtr cachedPtr =
-                            GetUnityCachedPtr(obj);
-
-                        if (cachedPtr != ptr)
-                        {
-                            continue;
-                        }
-
-                        lock (ManagedObjectCacheLock)
-                        {
-                            ManagedObjectCache[ptr] =
-                                new WeakReference(obj);
-                        }
-
-                        Logger.APILogger.LogDebug(
-                            "Resolved " +
-                            expectedType.FullName +
-                            " from native pointer 0x" +
-                            ptr.ToInt64().ToString("X"));
-
-                        return obj;
                     }
                 }
                 catch (Exception ex)
@@ -306,13 +556,30 @@ namespace Modding
                 }
             }
 
-            return FromObjectPtrUnsafe(ptr);
+            return FromObjectPtrUnsafe(
+                ptr);
         }
 
-        private static unsafe IntPtr ToObjectPtr(object o)
+        private static unsafe IntPtr ToObjectPtr(
+            object o)
         {
-            if (o == null) return IntPtr.Zero;
-            TypedReference tr = __makeref(o);
+            if (o == null)
+            {
+                return IntPtr.Zero;
+            }
+
+            UnityEngine.Object unityObject =
+                o as UnityEngine.Object;
+
+            if (unityObject != null)
+            {
+                return GetUnityCachedPtr(
+                    unityObject);
+            }
+
+            TypedReference tr =
+                __makeref(o);
+
             return *(IntPtr*)&tr;
         }
 
