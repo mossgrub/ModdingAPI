@@ -39,6 +39,8 @@ int mod2_install_resource_hooks(void *targetStreamPtr, void *targetNamesPtr,
 
 int mod2_install_takemp_hook(void *takeMPMethodPtr);
 
+uintptr_t mod2_managed_handle_to_native(uint32_t managedHandle);
+
 #ifdef __cplusplus
 }
 #endif

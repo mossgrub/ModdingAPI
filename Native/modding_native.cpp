@@ -69,10 +69,12 @@ namespace
     typedef void *(*Il2CppRuntimeInvoke)(void *method, void *obj, void **params, void **exc);
     typedef void *(*Il2CppStringNew)(const char *str);
     typedef void *(*Il2CppObjectUnbox)(void *obj);
+    typedef void *(*Il2CppGCHandleGetTargetFn)(uint32_t gchandle);
 
     Il2CppRuntimeInvoke g_invoke = nullptr;
     Il2CppStringNew g_strNew = nullptr;
     Il2CppObjectUnbox g_unbox = nullptr;
+    Il2CppGCHandleGetTargetFn g_gcHandleGetTarget = nullptr;
     bool g_ready = false;
 
     typedef void *(*ObjGetClassFn)(void *obj);
@@ -583,6 +585,25 @@ static void *LocationHookImpl(void *self, void *methodInfo)
 
 extern "C"
 {
+    uintptr_t mod2_managed_handle_to_native(uint32_t managedHandle)
+    {
+        if (!managedHandle)
+            return 0;
+
+        if (!g_gcHandleGetTarget)
+        {
+            LOGE(
+                "mod2_managed_handle_to_native: "
+                "il2cpp_gchandle_get_target unavailable");
+
+            return 0;
+        }
+
+        void *object =
+            g_gcHandleGetTarget(managedHandle);
+
+        return reinterpret_cast<uintptr_t>(object);
+    }
 
     int mod2_init(void)
     {
@@ -599,12 +620,18 @@ extern "C"
         g_invoke = (Il2CppRuntimeInvoke)dlsym(h, "il2cpp_runtime_invoke");
         g_strNew = (Il2CppStringNew)dlsym(h, "il2cpp_string_new");
         g_unbox = (Il2CppObjectUnbox)dlsym(h, "il2cpp_object_unbox");
+        g_gcHandleGetTarget =
+            (Il2CppGCHandleGetTargetFn)dlsym(
+                h,
+                "il2cpp_gchandle_get_target");
         if (!g_invoke || !g_strNew)
         {
             LOGE("mod2_init: missing il2cpp symbols invoke=%p strNew=%p", (void *)g_invoke, (void *)g_strNew);
             return 0;
         }
-        LOGI("mod2_init: il2cpp resolved (invoke=%p strNew=%p unbox=%p)", (void *)g_invoke, (void *)g_strNew, (void *)g_unbox);
+        LOGI("mod2_init: il2cpp resolved "
+             "(invoke=%p strNew=%p unbox=%p gcHandleTarget=%p)",
+             (void *)g_invoke, (void *)g_strNew, (void *)g_unbox, (void *)g_gcHandleGetTarget);
 
         g_objGetClass = (ObjGetClassFn)dlsym(h, "il2cpp_object_get_class");
         g_classGetFields = (ClassGetFieldsFn)dlsym(h, "il2cpp_class_get_fields");
