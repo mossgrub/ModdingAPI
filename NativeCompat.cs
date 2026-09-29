@@ -26,13 +26,10 @@ namespace Modding
             {
                 return;
             }
-            
+
             NativeBridge.EnsureReady();
 
             InstallHookEndpointRedirect();
-
-            NativeBridge.EnsureAddComponentHook();
-            NativeBridge.EnsureGameObjectCtorHook();
 
             LogILHookProvider();
         }

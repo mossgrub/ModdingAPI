@@ -946,6 +946,38 @@ namespace Modding
             return parameters[parameterIndex].ParameterType;
         }
 
+        private static void TryRebuildOrig(BridgeState st)
+        {
+            if (st.Orig != null || st.Trampoline == IntPtr.Zero ||
+                st.NativeMethod == IntPtr.Zero || st.Target == null)
+                return;
+
+            try
+            {
+                var adapter = new OrigAdapter
+                {
+                    Target = st.Target,
+                    NativeMethod = st.NativeMethod,
+                    Trampoline = st.Trampoline,
+                    InstanceCall = st.InstanceCall
+                };
+                Type pt = st.OrigParamType;
+                if (pt == null && st.Replacement != null)
+                {
+                    var parms = st.Replacement.Method?.GetParameters();
+                    if (parms != null && parms.Length > 0)
+                        pt = parms[0].ParameterType;
+                }
+                st.Orig = CreateManagedOrigDelegate(pt, st.Target, adapter);
+                Logger.APILogger.LogDebug("Rebuilt lost Orig for " + st.Target.Name);
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogError("Orig rebuild failed for " +
+                    (st.Target?.Name ?? "?") + ": " + ex);
+            }
+        }
+
         internal static void InvokeBridge<TSlot>(object[] args)
         {
             LogBridgeFirstInvoke(typeof(TSlot));
@@ -1067,9 +1099,9 @@ namespace Modding
                 //         : Array.Empty<object>();
 
                 if (st.InstanceCall &&
-                args != null &&
-                args.Length > 0 &&
-                args[0] == null)
+                    args != null &&
+                    args.Length > 0 &&
+                    args[0] == null)
                 {
                     Logger.APILogger.LogWarn(
                         "Managed self conversion failed for " +
@@ -1079,23 +1111,12 @@ namespace Modding
 
                     try
                     {
-                        object fallbackResult =
-                            NativeBridge.InvokeOrig(
-                                st.Target,
-                                st.NativeMethod,
-                                st.Trampoline,
-                                st.InstanceCall,
-                                nativeArgs);
-
-                        R fallbackConverted;
-
-                        if (TryConvertBridgeReturn(
-                                st,
-                                fallbackResult,
-                                out fallbackConverted))
-                        {
-                            return fallbackConverted;
-                        }
+                        NativeBridge.InvokeOrig(
+                            st.Target,
+                            st.NativeMethod,
+                            st.Trampoline,
+                            st.InstanceCall,
+                            nativeArgs);
                     }
                     catch (Exception ex)
                     {
@@ -1106,7 +1127,7 @@ namespace Modding
                             ex);
                     }
 
-                    return default(R);
+                    return;
                 }
 
                 lock (st.Handlers)
@@ -1140,39 +1161,6 @@ namespace Modding
                     st.Target,
                     hadPreviousSelf,
                     previousSelf);
-            }
-        }
-
-
-        private static void TryRebuildOrig(BridgeState st)
-        {
-            if (st.Orig != null || st.Trampoline == IntPtr.Zero ||
-                st.NativeMethod == IntPtr.Zero || st.Target == null)
-                return;
-
-            try
-            {
-                var adapter = new OrigAdapter
-                {
-                    Target = st.Target,
-                    NativeMethod = st.NativeMethod,
-                    Trampoline = st.Trampoline,
-                    InstanceCall = st.InstanceCall
-                };
-                Type pt = st.OrigParamType;
-                if (pt == null && st.Replacement != null)
-                {
-                    var parms = st.Replacement.Method?.GetParameters();
-                    if (parms != null && parms.Length > 0)
-                        pt = parms[0].ParameterType;
-                }
-                st.Orig = CreateManagedOrigDelegate(pt, st.Target, adapter);
-                Logger.APILogger.LogDebug("Rebuilt lost Orig for " + st.Target.Name);
-            }
-            catch (Exception ex)
-            {
-                Logger.APILogger.LogError("Orig rebuild failed for " +
-                    (st.Target?.Name ?? "?") + ": " + ex);
             }
         }
 
@@ -1300,9 +1288,9 @@ namespace Modding
                 //         : Array.Empty<object>();
 
                 if (st.InstanceCall &&
-                args != null &&
-                args.Length > 0 &&
-                args[0] == null)
+                    args != null &&
+                    args.Length > 0 &&
+                    args[0] == null)
                 {
                     Logger.APILogger.LogWarn(
                         "Managed self conversion failed for " +

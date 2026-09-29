@@ -22,12 +22,6 @@ namespace Modding
         [DllImport("modding_native", EntryPoint = "mod2_unbox")]
         private static extern void UnboxNative(IntPtr boxedObject, IntPtr outBuffer, int size);
 
-        [DllImport("modding_native", EntryPoint = "mod2_install_addcomponent_hook")]
-        private static extern int InstallAddComponentHook(IntPtr addComponentMethodPtr, IntPtr getComponentMethodInfo, IntPtr getComponentFuncPtr);
-
-        [DllImport("modding_native", EntryPoint = "mod2_install_gameobject_ctor_hook")]
-        private static extern int InstallGameObjectCtorHookNative(IntPtr ctorTargetAddr);
-
         [DllImport("modding_native", EntryPoint = "mod2_install_takemp_hook")]
         private static extern int InstallTakeMPHookNative(IntPtr takeMPTargetAddr);
 
@@ -39,8 +33,6 @@ namespace Modding
 
         private static bool _initTried;
         private static bool _ready;
-        private static bool _addComponentHookInstalled;
-        private static bool _gameObjectCtorInstalled;
         private static bool _takeMPHookInstalled;
 
         internal static bool Ready => _ready;
@@ -57,63 +49,13 @@ namespace Modding
             }
             if (_ready)
             {
-
                 try { SetLogFileNative(Application.persistentDataPath + "/NativeLog.txt"); }
                 catch (Exception ex) { Logger.APILogger.LogWarn("Could not set native log file: " + ex.Message); }
             }
         }
 
-        internal static void EnsureAddComponentHook()
-        {
-            if (_addComponentHookInstalled || !_ready) return;
-            try
-            {
-                MethodInfo addType = typeof(UnityEngine.GameObject).GetMethod("AddComponent",
-                    BindingFlags.Public | BindingFlags.Instance, null, new Type[] { typeof(Type) }, null);
-                MethodInfo getType = typeof(UnityEngine.GameObject).GetMethod("GetComponent",
-                    BindingFlags.Public | BindingFlags.Instance, null, new Type[] { typeof(Type) }, null);
-                if (addType == null || getType == null) return;
-
-                IntPtr addPtr = Il2CppResolver.TryGetMethodPointer(addType, 1, "System.Type");
-                IntPtr getInfo = Il2CppResolver.TryGetMethodInfoPointer(getType, 1, "System.Type");
-                IntPtr getPtr = Il2CppResolver.TryGetMethodPointer(getType, 1, "System.Type");
-                Logger.APILogger.LogDebug("AddComponent hook resolve: addComponentPtr=0x" + addPtr.ToInt64().ToString("X") + " getComponentMethodInfo=0x" + getInfo.ToInt64().ToString("X") + " getComponentFuncPtr=0x" + getPtr.ToInt64().ToString("X"));
-                if (addPtr == IntPtr.Zero || getPtr == IntPtr.Zero) return;
-
-                _addComponentHookInstalled = InstallAddComponentHook(addPtr, getInfo, getPtr) != 0;
-                Logger.APILogger.Log(_addComponentHookInstalled
-                    ? "GameObject.AddComponent native compat hook installed."
-                    : "GameObject.AddComponent native compat hook failed to install.");
-            }
-            catch (Exception ex) { Logger.APILogger.LogWarn("Native AddComponent hook install failed: " + ex.Message); }
-        }
-
-        internal static void EnsureGameObjectCtorHook()
-        {
-            if (_gameObjectCtorInstalled || !_ready) return;
-            try
-            {
-                ConstructorInfo ctor = typeof(GameObject).GetConstructor(
-                    new Type[] { typeof(string), typeof(Type[]) });
-                if (ctor == null) return;
-
-                IntPtr ctorPtr = Il2CppResolver.TryGetConstructorPointer(ctor, 2, null);
-                if (ctorPtr == IntPtr.Zero)
-                {
-                    Logger.APILogger.LogWarn("GameObject(string, params Type[]) ctor address not found.");
-                    return;
-                }
-
-                _gameObjectCtorInstalled = InstallGameObjectCtorHookNative(ctorPtr) != 0;
-                Logger.APILogger.Log(_gameObjectCtorInstalled
-                    ? "GameObject(string, params Type[]) ctor hook installed."
-                    : "GameObject(string, params Type[]) ctor hook failed to install.");
-            }
-            catch (Exception ex) { Logger.APILogger.LogWarn("GameObject ctor hook install failed: " + ex.Message); }
-        }
-
         private static readonly object ManagedObjectCacheLock =
-    new object();
+            new object();
 
         private static readonly Dictionary<IntPtr, WeakReference>
             ManagedObjectCache =
@@ -148,7 +90,7 @@ namespace Modding
         }
 
         private static IntPtr GetUnityCachedPtr(
-    UnityEngine.Object obj)
+            UnityEngine.Object obj)
         {
             if (obj == null)
             {
@@ -177,7 +119,6 @@ namespace Modding
             {
             }
 
-            // Fallback
             try
             {
                 FieldInfo field =
@@ -230,7 +171,7 @@ namespace Modding
         }
 
         private static object TryGetStaticInstance(
-    Type expectedType)
+            Type expectedType)
         {
             if (expectedType == null)
             {
@@ -633,15 +574,6 @@ namespace Modding
 
             return *(IntPtr*)&tr;
         }
-
-        // private unsafe static object FromObjectPtrUnsafe(IntPtr p)
-        // {
-        //     if (p == IntPtr.Zero) return null;
-        //     object o = null;
-        //     TypedReference tr = __makeref(o);
-        //     *(IntPtr*)&tr = p;
-        //     return o;
-        // }
 
         internal static object InvokeOrig(MethodInfo target, IntPtr nativeMethod, IntPtr trampoline,
             bool instanceCall, object[] args)
