@@ -1064,33 +1064,43 @@ namespace Modding
                     Array.Copy(args, 0, full, 1, argLen);
                 }
 
-                // if (st.InstanceCall &&
-                //     rawSelf != IntPtr.Zero &&
-                //     args != null &&
-                //     args.Length > 0 &&
-                //     args[0] == null)
-                // {
-                //     Logger.APILogger.LogWarn(
-                //         "Managed self conversion failed for " +
-                //         st.Target.Name +
-                //         ". Calling original method directly using native self 0x" +
-                //         rawSelf.ToInt64().ToString("X"));
+                object[] nativeArgs =
+                    args != null
+                        ? (object[])args.Clone()
+                        : null;
 
-                //     try
-                //     {
-                //         st.Orig.DynamicInvoke(full);
-                //     }
-                //     catch (Exception ex)
-                //     {
-                //         Logger.APILogger.LogError(
-                //             "Original fallback failed for " +
-                //             st.Target.Name +
-                //             ": " +
-                //             ex);
-                //     }
+                if (st.InstanceCall &&
+                    args != null &&
+                    args.Length > 0 &&
+                    args[0] == null)
+                {
+                    Logger.APILogger.LogWarn(
+                        "DetourBridge: managed self conversion failed for " +
+                        st.Target.Name +
+                        ". Calling native original trampoline.");
 
-                //     return;
-                // }
+                    try
+                    {
+                        NativeBridge.InvokeOrig(
+                            st.Target,
+                            st.NativeMethod,
+                            st.Trampoline,
+                            st.InstanceCall,
+                            nativeArgs);
+
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.APILogger.LogError(
+                            "Native original trampoline fallback failed for " +
+                            st.Target.Name +
+                            ": " +
+                            ex);
+                    }
+
+                    return;
+                }
 
                 lock (st.Handlers)
                 {
@@ -1264,41 +1274,43 @@ namespace Modding
                     Array.Copy(args, 0, full, 1, argLen);
                 }
 
-                // if (st.InstanceCall &&
-                //     rawSelf != IntPtr.Zero &&
-                //     args != null &&
-                //     args.Length > 0 &&
-                //     args[0] == null)
-                // {
-                //     Logger.APILogger.LogWarn(
-                //         "Managed self conversion failed for " +
-                //         st.Target.Name +
-                //         ". Calling original return method directly.");
+                object[] nativeArgs =
+                    args != null
+                        ? (object[])args.Clone()
+                        : null;
 
-                //     try
-                //     {
-                //         object originalResult =
-                //             st.Orig.DynamicInvoke(full);
+                if (st.InstanceCall &&
+                    args != null &&
+                    args.Length > 0 &&
+                    args[0] == null)
+                {
+                    Logger.APILogger.LogWarn(
+                        "DetourBridge: managed self conversion failed for " +
+                        st.Target.Name +
+                        ". Calling native original trampoline.");
 
-                //         if (TryConvertBridgeReturn(
-                //             st,
-                //             originalResult,
-                //             out R fallbackResult))
-                //         {
-                //             return fallbackResult;
-                //         }
-                //     }
-                //     catch (Exception ex)
-                //     {
-                //         Logger.APILogger.LogError(
-                //             "Original return fallback failed for " +
-                //             st.Target.Name +
-                //             ": " +
-                //             ex);
-                //     }
+                    try
+                    {
+                        NativeBridge.InvokeOrig(
+                            st.Target,
+                            st.NativeMethod,
+                            st.Trampoline,
+                            st.InstanceCall,
+                            nativeArgs);
 
-                //     return default(R);
-                // }
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.APILogger.LogError(
+                            "Native original trampoline fallback failed for " +
+                            st.Target.Name +
+                            ": " +
+                            ex);
+                    }
+
+                    return;
+                }
 
                 R result = default;
                 bool invoked = false;

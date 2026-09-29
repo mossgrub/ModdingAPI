@@ -31,6 +31,9 @@ namespace Modding
         [DllImport("modding_native", EntryPoint = "mod2_install_takemp_hook")]
         private static extern int InstallTakeMPHookNative(IntPtr takeMPTargetAddr);
 
+        [DllImport("modding_native", EntryPoint = "mod2_managed_object_to_native")]
+        private static extern IntPtr ManagedObjectToNative(IntPtr managedGcHandle);
+
         private static bool _initTried;
         private static bool _ready;
         private static bool _addComponentHookInstalled;
@@ -374,6 +377,39 @@ namespace Modding
             catch (Exception ex) { Logger.APILogger.LogWarn("TakeMP hook install failed: " + ex.Message); }
         }
 
+        internal static IntPtr ObjectToPtr(object o)
+        {
+            if (o == null)
+                return IntPtr.Zero;
+
+            UnityEngine.Object unityObject =
+                o as UnityEngine.Object;
+
+            if (unityObject != null)
+            {
+                IntPtr ptr =
+                    GetUnityCachedPtr(unityObject);
+
+                if (ptr != IntPtr.Zero)
+                    return ptr;
+            }
+
+            GCHandle handle =
+                GCHandle.Alloc(
+                    o,
+                    GCHandleType.Normal);
+
+            try
+            {
+                return ManagedObjectToNative(
+                    GCHandle.ToIntPtr(handle));
+            }
+            finally
+            {
+                handle.Free();
+            }
+        }
+
         internal static IntPtr ObjectToPtr(object o) => ToObjectPtr(o);
 
         internal static object FromObjectPtr(
@@ -583,14 +619,14 @@ namespace Modding
             return *(IntPtr*)&tr;
         }
 
-        private unsafe static object FromObjectPtrUnsafe(IntPtr p)
-        {
-            if (p == IntPtr.Zero) return null;
-            object o = null;
-            TypedReference tr = __makeref(o);
-            *(IntPtr*)&tr = p;
-            return o;
-        }
+        // private unsafe static object FromObjectPtrUnsafe(IntPtr p)
+        // {
+        //     if (p == IntPtr.Zero) return null;
+        //     object o = null;
+        //     TypedReference tr = __makeref(o);
+        //     *(IntPtr*)&tr = p;
+        //     return o;
+        // }
 
         internal static object InvokeOrig(MethodInfo target, IntPtr nativeMethod, IntPtr trampoline,
             bool instanceCall, object[] args)
@@ -640,7 +676,14 @@ namespace Modding
                             }
                             else
                             {
-                                slots[i] = ToObjectPtr(val);
+                                if (val is IntPtr)
+                                {
+                                    slots[i] = (IntPtr)val;
+                                }
+                                else
+                                {
+                                    slots[i] = ToObjectPtr(val);
+                                }
                             }
                         }
                     }

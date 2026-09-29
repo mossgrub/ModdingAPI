@@ -1,4 +1,7 @@
 using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using HutongGames.PlayMaker;
@@ -14,6 +17,12 @@ namespace Modding
             "PlayMaker Unity 2D";
 
         private static bool _installed;
+
+        private static BootstrapRunner _runner;
+
+        private static readonly HashSet<int>
+            _processedModPrefabFsms =
+                new HashSet<int>();
 
         public static bool IsInstalled
         {
@@ -32,10 +41,14 @@ namespace Modding
 
             try
             {
+                EnsureRunner();
+
                 UnityEngine.SceneManagement.SceneManager.sceneLoaded +=
                     OnSceneLoaded;
 
                 EnsureCurrentScene();
+
+                ScheduleModPrefabPreprocess();
 
                 Logger.APILogger.Log(
                     "PlayMaker2D bootstrap installed");
@@ -75,6 +88,8 @@ namespace Modding
 
             _installed = false;
 
+            _processedModPrefabFsms.Clear();
+
             Logger.APILogger.Log(
                 "PlayMaker2D bootstrap uninstalled");
         }
@@ -86,6 +101,8 @@ namespace Modding
             try
             {
                 EnsureScene(scene);
+
+                ScheduleModPrefabPreprocess();
             }
             catch (Exception ex)
             {
@@ -120,7 +137,8 @@ namespace Modding
             }
         }
 
-        private static void EnsureScene(Scene scene)
+        private static void EnsureScene(
+            Scene scene)
         {
             if (!scene.IsValid())
                 return;
@@ -129,7 +147,9 @@ namespace Modding
                 return;
 
             if (HasExistingInstance(scene))
+            {
                 return;
+            }
 
             GameObject prefab =
                 LoadPrefab();
@@ -140,7 +160,8 @@ namespace Modding
             try
             {
                 GameObject instance =
-                    UnityEngine.Object.Instantiate(prefab);
+                    UnityEngine.Object.Instantiate(
+                        prefab);
 
                 if (instance == null)
                     return;
@@ -153,7 +174,8 @@ namespace Modding
                         instance,
                         scene);
 
-                PreprocessPlayMakerFsms(instance);
+                PreprocessPlayMakerFsms(
+                    instance);
             }
             catch (Exception ex)
             {
@@ -181,7 +203,7 @@ namespace Modding
                 }
 
                 Logger.APILogger.LogWarn(
-                    "PlayMaker2D resources.Load returned null for: " +
+                    "PlayMaker2D prefab not found: " +
                     PrefabResourcePath);
             }
             catch (Exception ex)
@@ -194,7 +216,8 @@ namespace Modding
             return null;
         }
 
-        private static bool HasExistingInstance(Scene scene)
+        private static bool HasExistingInstance(
+            Scene scene)
         {
             try
             {
@@ -244,7 +267,8 @@ namespace Modding
             return false;
         }
 
-        private static void PreprocessPlayMakerFsms(GameObject root)
+        private static void PreprocessPlayMakerFsms(
+            GameObject root)
         {
             if (root == null)
                 return;
@@ -274,16 +298,13 @@ namespace Modding
                     try
                     {
                         fsm.Preprocess();
-
                         processed++;
                     }
                     catch (Exception ex)
                     {
                         Logger.APILogger.LogWarn(
                             "Play Maker failed to preprocess FSM `" +
-                            fsm.FsmName +
-                            "` on `" +
-                            fsm.gameObject.name +
+                            SafeFsmName(fsm) +
                             "`: " +
                             ex.Message);
                     }
@@ -303,6 +324,296 @@ namespace Modding
                 Logger.APILogger.LogWarn(
                     "Play Maker FSM preprocessing failed: " +
                     ex);
+            }
+        }
+
+        private static void ScheduleModPrefabPreprocess()
+        {
+            EnsureRunner();
+
+            if (_runner != null)
+            {
+                _runner.Schedule();
+            }
+        }
+
+        private static void PreprocessLoadedModPrefabs()
+        {
+            try
+            {
+                PlayMakerFSM[] fsms =
+                    Resources.FindObjectsOfTypeAll<
+                        PlayMakerFSM>();
+
+                if (fsms == null)
+                    return;
+
+                int processed = 0;
+
+                for (int i = 0;
+                     i < fsms.Length;
+                     i++)
+                {
+                    PlayMakerFSM fsm =
+                        fsms[i];
+
+                    if (fsm == null)
+                        continue;
+
+                    if (!IsPrefabObject(fsm.gameObject))
+                        continue;
+
+                    if (!IsModOwnedObject(fsm.gameObject))
+                        continue;
+
+                    int id =
+                        fsm.GetInstanceID();
+
+                    if (_processedModPrefabFsms.Contains(id))
+                        continue;
+
+                    try
+                    {
+                        fsm.Preprocess();
+
+                        _processedModPrefabFsms.Add(id);
+
+                        processed++;
+
+                        Logger.APILogger.LogDebug(
+                            "PlayMaker preprocessed mod prefab FSM `" +
+                            SafeFsmName(fsm) +
+                            "` on `" +
+                            fsm.gameObject.name +
+                            "`.");
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.APILogger.LogWarn(
+                            "PlayMaker failed to preprocess mod prefab FSM `" +
+                            SafeFsmName(fsm) +
+                            "`: " +
+                            ex.Message);
+                    }
+                }
+
+                if (processed > 0)
+                {
+                    Logger.APILogger.Log(
+                        "PlayMaker preprocessed " +
+                        processed +
+                        " mod prefab FSM(s).");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogWarn(
+                    "PlayMaker mod prefab scan failed: " +
+                    ex);
+            }
+        }
+
+        private static bool IsPrefabObject(
+            GameObject obj)
+        {
+            if (obj == null)
+                return false;
+
+            try
+            {
+                Scene scene =
+                    obj.scene;
+
+                if (scene.IsValid() &&
+                    scene.isLoaded)
+                {
+                    return false;
+                }
+
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool IsModOwnedObject(
+            GameObject obj)
+        {
+            if (obj == null)
+                return false;
+
+            try
+            {
+                Transform root =
+                    obj.transform.root;
+
+                if (root == null)
+                    return false;
+
+                MonoBehaviour[] behaviours =
+                    root.GetComponentsInChildren<
+                        MonoBehaviour>(
+                            true);
+
+                if (behaviours == null)
+                    return false;
+
+                for (int i = 0;
+                     i < behaviours.Length;
+                     i++)
+                {
+                    MonoBehaviour behaviour =
+                        behaviours[i];
+
+                    if (behaviour == null)
+                        continue;
+
+                    Type type =
+                        behaviour.GetType();
+
+                    if (type == null)
+                        continue;
+
+                    string fullName =
+                        type.FullName;
+
+                    if (!string.IsNullOrEmpty(
+                            fullName) &&
+                        fullName.StartsWith(
+                            "HollowPoint.",
+                            StringComparison.Ordinal))
+                    {
+                        return true;
+                    }
+
+                    Assembly assembly =
+                        type.Assembly;
+
+                    if (assembly == null)
+                        continue;
+
+                    string location = null;
+
+                    try
+                    {
+                        location =
+                            assembly.Location;
+                    }
+                    catch
+                    {
+                    }
+
+                    if (string.IsNullOrEmpty(location))
+                        continue;
+
+                    if (location.IndexOf(
+                            "/Mods/",
+                            StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        location.IndexOf(
+                            "\\Mods\\",
+                            StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return false;
+        }
+
+        private static string SafeFsmName(
+            PlayMakerFSM fsm)
+        {
+            try
+            {
+                return fsm != null
+                    ? fsm.FsmName
+                    : "<null>";
+            }
+            catch
+            {
+                return "<unknown>";
+            }
+        }
+
+        private static void EnsureRunner()
+        {
+            if (_runner != null)
+                return;
+
+            try
+            {
+                GameObject go =
+                    GameObject.Find(
+                        "__Modding_PlayMaker2DRunner");
+
+                if (go == null)
+                {
+                    go =
+                        new GameObject(
+                            "__Modding_PlayMaker2DRunner");
+
+                    UnityEngine.Object.DontDestroyOnLoad(
+                        go);
+                }
+
+                _runner =
+                    go.GetComponent<
+                        BootstrapRunner>();
+
+                if (_runner == null)
+                {
+                    _runner =
+                        go.AddComponent<
+                            BootstrapRunner>();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogWarn(
+                    "PlayMaker2D runner creation failed: " +
+                    ex.Message);
+
+                _runner = null;
+            }
+        }
+
+        private sealed class BootstrapRunner
+            : MonoBehaviour
+        {
+            private bool _scheduled;
+
+            internal void Schedule()
+            {
+                if (_scheduled)
+                    return;
+
+                _scheduled = true;
+
+                StartCoroutine(
+                    DeferredScan());
+            }
+
+            private IEnumerator DeferredScan()
+            {
+                try
+                {
+                    for (int i = 0; i < 5; i++)
+                    {
+                        yield return null;
+
+                        PreprocessLoadedModPrefabs();
+                    }
+                }
+                finally
+                {
+                    _scheduled = false;
+                }
             }
         }
     }
