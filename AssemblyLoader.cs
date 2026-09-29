@@ -40,30 +40,234 @@ namespace Modding
 
             if (!_loadingAssemblies.TryAdd(fileName, true))
             {
-                Logger.APILogger.LogError($"Circular dependency detected for: {fileName}");
+                Logger.APILogger.LogWarn(
+                    $"Dependency cycle detected while loading: {fileName}");
+
                 return null;
             }
 
             try
             {
-                Assembly asm = _useHybridCLR ? LoadAssemblyHybridCLR(path) : LoadAssemblyMono(path);
+                // HybridCLR must have referenced mod assemblies available
+                // before Assembly.Load(bytes) resolves their type references.
+                if (_useHybridCLR)
+                {
+                    try
+                    {
+                        EnsureHybridCLRDependencies(path);
+                    }
+                    catch (Exception dependencyEx)
+                    {
+                        Logger.APILogger.LogError(
+                            $"Failed to preload dependencies for {path}: {dependencyEx}");
+                    }
+                }
+
+                Assembly asm = _useHybridCLR
+                    ? LoadAssemblyHybridCLR(path)
+                    : LoadAssemblyMono(path);
+
                 if (asm != null)
                 {
                     _loadedAssemblies[fileName] = asm;
                     _loadedAssemblies[asm.GetName().Name] = asm;
+
                     CompatHooks.Register(asm, path);
+
+                    try
+                    {
+                        string dir = Path.GetDirectoryName(path);
+
+                        if (!string.IsNullOrEmpty(dir))
+                            Directory.CreateDirectory(dir);
+                    }
+                    catch (Exception dirEx)
+                    {
+                        Logger.APILogger.LogWarn(
+                            $"Could not ensure mod directory for `{path}`: {dirEx.Message}");
+                    }
                 }
+
                 return asm;
             }
             catch (Exception ex)
             {
-                Logger.APILogger.LogError($"Failed to load assembly {path}: {ex.Message}");
+                Logger.APILogger.LogError(
+                    $"Failed to load assembly {path}: {ex}");
+
                 return null;
             }
             finally
             {
                 _loadingAssemblies.TryRemove(fileName, out _);
             }
+        }
+
+        private static void EnsureHybridCLRDependencies(string assemblyPath)
+        {
+            if (string.IsNullOrEmpty(assemblyPath) ||
+                !File.Exists(assemblyPath))
+            {
+                return;
+            }
+
+            byte[] bytes = File.ReadAllBytes(assemblyPath);
+
+            if (bytes == null || bytes.Length == 0)
+            {
+                Logger.APILogger.LogWarn(
+                    $"Cannot inspect dependencies of empty assembly: {assemblyPath}");
+
+                return;
+            }
+
+            using (MemoryStream input = new MemoryStream(bytes))
+            {
+                Mono.Cecil.ReaderParameters readerParameters =
+                    new Mono.Cecil.ReaderParameters
+                    {
+                        InMemory = true,
+                        ReadSymbols = false
+                    };
+
+                using (Mono.Cecil.AssemblyDefinition assembly =
+                       Mono.Cecil.AssemblyDefinition.ReadAssembly(
+                           input,
+                           readerParameters))
+                {
+                    foreach (Mono.Cecil.AssemblyNameReference reference
+                             in assembly.MainModule.AssemblyReferences)
+                    {
+                        if (reference == null ||
+                            string.IsNullOrEmpty(reference.Name))
+                        {
+                            continue;
+                        }
+
+                        string dependencyName = reference.Name;
+
+                        if (_loadedAssemblies.ContainsKey(dependencyName))
+                        {
+                            Logger.APILogger.LogDebug(
+                                $"Already loaded: {dependencyName}");
+
+                            continue;
+                        }
+
+                        if (IsFrameworkAssembly(dependencyName))
+                        {
+                            continue;
+                        }
+
+                        if (!_assemblyPathCache.TryGetValue(
+                                dependencyName,
+                                out string dependencyPath))
+                        {
+                            Logger.APILogger.LogDebug(
+                                $"No local mod assembly found for: " +
+                                dependencyName);
+
+                            continue;
+                        }
+
+                        if (string.Equals(
+                                dependencyPath,
+                                assemblyPath,
+                                StringComparison.OrdinalIgnoreCase))
+                        {
+                            continue;
+                        }
+
+                        Logger.APILogger.Log(
+                            $"{Path.GetFileName(assemblyPath)} -> " +
+                            $"{dependencyName}");
+
+                        if (!_loadedAssemblies.ContainsKey(dependencyName))
+                        {
+                            Assembly dependencyAssembly =
+                                LoadAssembly(dependencyPath);
+
+                            if (dependencyAssembly == null)
+                            {
+                                Logger.APILogger.LogWarn(
+                                    $"Failed to preload dependency " +
+                                    $"{dependencyName} required by " +
+                                    $"{Path.GetFileName(assemblyPath)}");
+                            }
+                            else
+                            {
+                                Logger.APILogger.Log(
+                                    $"Loaded dependency " +
+                                    $"{dependencyName} before " +
+                                    $"{Path.GetFileName(assemblyPath)}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        private static bool IsFrameworkAssembly(string assemblyName)
+        {
+            if (string.IsNullOrEmpty(assemblyName))
+                return true;
+
+            if (IsMonoModAssembly(assemblyName))
+                return true;
+
+            if (string.Equals(
+                    assemblyName,
+                    typeof(AssemblyLoader).Assembly.GetName().Name,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (string.Equals(
+                    assemblyName,
+                    "mscorlib",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (string.Equals(
+                    assemblyName,
+                    "System",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (assemblyName.StartsWith(
+                    "System.",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (assemblyName.Equals(
+                    "netstandard",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (assemblyName.StartsWith(
+                    "UnityEngine",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (assemblyName.StartsWith(
+                    "Unity.",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return false;
         }
 
         private static Assembly LoadAssemblyMono(string path)

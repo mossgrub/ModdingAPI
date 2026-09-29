@@ -34,6 +34,9 @@ namespace Modding
         [DllImport("modding_native", EntryPoint = "mod2_managed_object_to_native")]
         private static extern IntPtr ManagedObjectToNative(IntPtr managedGcHandle);
 
+        [DllImport("modding_native", EntryPoint = "mod2_managed_handle_to_native")]
+        private static extern IntPtr ManagedHandleToNative(uint managedHandle);
+
         private static bool _initTried;
         private static bool _ready;
         private static bool _addComponentHookInstalled;
@@ -410,7 +413,19 @@ namespace Modding
             }
         }
 
-        internal static IntPtr ObjectToPtr(object o) => ToObjectPtr(o);
+        private static unsafe object FromObjectPtrUnsafe(IntPtr p)
+        {
+            if (p == IntPtr.Zero)
+                return null;
+
+            object o = null;
+
+            TypedReference tr = __makeref(o);
+
+            *(IntPtr*)&tr = p;
+
+            return o;
+        }
 
         internal static object FromObjectPtr(
             IntPtr ptr,
@@ -676,9 +691,9 @@ namespace Modding
                             }
                             else
                             {
-                                if (val is IntPtr)
+                                if (val is IntPtr nativePtr)
                                 {
-                                    slots[i] = (IntPtr)val;
+                                    slots[i] = nativePtr;
                                 }
                                 else
                                 {
