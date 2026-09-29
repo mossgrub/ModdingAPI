@@ -1064,35 +1064,33 @@ namespace Modding
                     Array.Copy(args, 0, full, 1, argLen);
                 }
 
-                // if the native object exists but we could not reconstruct
-                // the managed Unity object, never block the original game method.
-                if (st.InstanceCall &&
-                    rawSelf != IntPtr.Zero &&
-                    args != null &&
-                    args.Length > 0 &&
-                    args[0] == null)
-                {
-                    Logger.APILogger.LogWarn(
-                        "Managed self conversion failed for " +
-                        st.Target.Name +
-                        ". Calling original method directly using native self 0x" +
-                        rawSelf.ToInt64().ToString("X"));
+                // if (st.InstanceCall &&
+                //     rawSelf != IntPtr.Zero &&
+                //     args != null &&
+                //     args.Length > 0 &&
+                //     args[0] == null)
+                // {
+                //     Logger.APILogger.LogWarn(
+                //         "Managed self conversion failed for " +
+                //         st.Target.Name +
+                //         ". Calling original method directly using native self 0x" +
+                //         rawSelf.ToInt64().ToString("X"));
 
-                    try
-                    {
-                        st.Orig.DynamicInvoke(full);
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.APILogger.LogError(
-                            "Original fallback failed for " +
-                            st.Target.Name +
-                            ": " +
-                            ex);
-                    }
+                //     try
+                //     {
+                //         st.Orig.DynamicInvoke(full);
+                //     }
+                //     catch (Exception ex)
+                //     {
+                //         Logger.APILogger.LogError(
+                //             "Original fallback failed for " +
+                //             st.Target.Name +
+                //             ": " +
+                //             ex);
+                //     }
 
-                    return;
-                }
+                //     return;
+                // }
 
                 lock (st.Handlers)
                 {
@@ -1266,41 +1264,41 @@ namespace Modding
                     Array.Copy(args, 0, full, 1, argLen);
                 }
 
-                if (st.InstanceCall &&
-                    rawSelf != IntPtr.Zero &&
-                    args != null &&
-                    args.Length > 0 &&
-                    args[0] == null)
-                {
-                    Logger.APILogger.LogWarn(
-                        "Managed self conversion failed for " +
-                        st.Target.Name +
-                        ". Calling original return method directly.");
+                // if (st.InstanceCall &&
+                //     rawSelf != IntPtr.Zero &&
+                //     args != null &&
+                //     args.Length > 0 &&
+                //     args[0] == null)
+                // {
+                //     Logger.APILogger.LogWarn(
+                //         "Managed self conversion failed for " +
+                //         st.Target.Name +
+                //         ". Calling original return method directly.");
 
-                    try
-                    {
-                        object originalResult =
-                            st.Orig.DynamicInvoke(full);
+                //     try
+                //     {
+                //         object originalResult =
+                //             st.Orig.DynamicInvoke(full);
 
-                        if (TryConvertBridgeReturn(
-                            st,
-                            originalResult,
-                            out R fallbackResult))
-                        {
-                            return fallbackResult;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.APILogger.LogError(
-                            "Original return fallback failed for " +
-                            st.Target.Name +
-                            ": " +
-                            ex);
-                    }
+                //         if (TryConvertBridgeReturn(
+                //             st,
+                //             originalResult,
+                //             out R fallbackResult))
+                //         {
+                //             return fallbackResult;
+                //         }
+                //     }
+                //     catch (Exception ex)
+                //     {
+                //         Logger.APILogger.LogError(
+                //             "Original return fallback failed for " +
+                //             st.Target.Name +
+                //             ": " +
+                //             ex);
+                //     }
 
-                    return default(R);
-                }
+                //     return default(R);
+                // }
 
                 R result = default;
                 bool invoked = false;

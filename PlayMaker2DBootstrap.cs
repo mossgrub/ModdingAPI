@@ -1,5 +1,4 @@
 using System;
-using System.Reflection;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using HutongGames.PlayMaker;
@@ -15,10 +14,6 @@ namespace Modding
             "PlayMaker Unity 2D";
 
         private static bool _installed;
-        private static bool _awakeHookInstalled;
-
-        private delegate void OrigPlayMakerAwake(
-            PlayMakerFSM self);
 
         public static bool IsInstalled
         {
@@ -37,14 +32,10 @@ namespace Modding
 
             try
             {
-                InstallPlayMakerAwakeHook();
-
                 UnityEngine.SceneManagement.SceneManager.sceneLoaded +=
                     OnSceneLoaded;
 
                 EnsureCurrentScene();
-
-                EnsureCurrentSceneFsms();
 
                 Logger.APILogger.Log(
                     "PlayMaker2D bootstrap installed");
@@ -88,89 +79,6 @@ namespace Modding
                 "PlayMaker2D bootstrap uninstalled");
         }
 
-        // PlayMakerFSM.Awake hook
-
-        private static void InstallPlayMakerAwakeHook()
-        {
-            if (_awakeHookInstalled)
-                return;
-
-            try
-            {
-                MethodInfo awake =
-                    typeof(PlayMakerFSM).GetMethod(
-                        "Awake",
-                        BindingFlags.Instance |
-                        BindingFlags.Public |
-                        BindingFlags.NonPublic);
-
-                if (awake == null)
-                {
-                    Logger.APILogger.LogWarn(
-                        "PlayMakerFSM.Awake not found. " +
-                        "Global FSM initialization hook was not installed.");
-
-                    return;
-                }
-
-                Delegate replacement =
-                    (Action<OrigPlayMakerAwake, PlayMakerFSM>)
-                        PlayMakerAwakeHook;
-
-                Delegate trampoline;
-
-                string error;
-
-                bool installed =
-                    DetourBridge.TryCreateOrigDetour(
-                        awake,
-                        replacement,
-                        out trampoline,
-                        out error);
-
-                if (!installed)
-                {
-                    Logger.APILogger.LogWarn(
-                        "PlayMakerFSM.Awake hook failed: " +
-                        error);
-
-                    return;
-                }
-
-                _awakeHookInstalled = true;
-
-                Logger.APILogger.Log(
-                    "PlayMakerFSM.Awake initialization hook installed");
-            }
-            catch (Exception ex)
-            {
-                Logger.APILogger.LogError(
-                    "PlayMakerFSM.Awake hook installation failed: " +
-                    ex);
-            }
-        }
-
-        private static void PlayMakerAwakeHook(
-            OrigPlayMakerAwake orig,
-            PlayMakerFSM self)
-        {
-            try
-            {
-                if (orig != null)
-                {
-                    orig(self);
-                }
-            }
-            finally
-            {
-                EnsureInitialized(
-                    self,
-                    "Awake");
-            }
-        }
-
-        // Scene handling
-
         private static void OnSceneLoaded(
             Scene scene,
             LoadSceneMode mode)
@@ -178,7 +86,6 @@ namespace Modding
             try
             {
                 EnsureScene(scene);
-                EnsureSceneFsms(scene);
             }
             catch (Exception ex)
             {
@@ -195,9 +102,11 @@ namespace Modding
                 Scene scene =
                     UnityEngine.SceneManagement.SceneManager.GetActiveScene();
 
-                if (!scene.IsValid() ||
-                    !scene.isLoaded)
+                if (!scene.IsValid())
                 {
+                    Logger.APILogger.LogWarn(
+                        "PlayMaker2D active scene is invalid");
+
                     return;
                 }
 
@@ -205,61 +114,46 @@ namespace Modding
             }
             catch (Exception ex)
             {
-                Logger.APILogger.LogWarn(
-                    "PlayMaker2D current-scene bootstrap failed: " +
-                    ex.Message);
+                Logger.APILogger.LogError(
+                    "PlayMaker2D current scene bootstrap failed: " +
+                    ex);
             }
         }
 
-        private static void EnsureScene(
-            Scene scene)
+        private static void EnsureScene(Scene scene)
         {
-            if (!scene.IsValid() ||
-                !scene.isLoaded)
-            {
+            if (!scene.IsValid())
                 return;
-            }
+
+            if (!scene.isLoaded)
+                return;
+
+            if (HasExistingInstance(scene))
+                return;
+
+            GameObject prefab =
+                LoadPrefab();
+
+            if (prefab == null)
+                return;
 
             try
             {
-                if (HasExistingInstance(scene))
-                {
-                    return;
-                }
-
-                GameObject prefab =
-                    LoadPrefab();
-
-                if (prefab == null)
-                {
-                    return;
-                }
-
                 GameObject instance =
-                    UnityEngine.Object.Instantiate(
-                        prefab);
+                    UnityEngine.Object.Instantiate(prefab);
 
                 if (instance == null)
-                {
-                    Logger.APILogger.LogWarn(
-                        "PlayMaker2D Instantiate returned null");
-
                     return;
-                }
 
                 instance.name =
                     InstanceName;
 
-                UnityEngine.SceneManagement.SceneManager.MoveGameObjectToScene(
-                    instance,
-                    scene);
+                UnityEngine.SceneManagement.SceneManager
+                    .MoveGameObjectToScene(
+                        instance,
+                        scene);
 
                 PreprocessPlayMakerFsms(instance);
-
-                Logger.APILogger.Log(
-                    "PlayMaker2D instantiated PlayMaker Unity 2D " +
-                    "in scene: " +
-                    scene.name);
             }
             catch (Exception ex)
             {
@@ -287,7 +181,7 @@ namespace Modding
                 }
 
                 Logger.APILogger.LogWarn(
-                    "PlayMaker2D Resources.Load returned null for: " +
+                    "PlayMaker2D resources.Load returned null for: " +
                     PrefabResourcePath);
             }
             catch (Exception ex)
@@ -300,10 +194,7 @@ namespace Modding
             return null;
         }
 
-        // Existing prefab instance detection
-
-        private static bool HasExistingInstance(
-            Scene scene)
+        private static bool HasExistingInstance(Scene scene)
         {
             try
             {
@@ -321,8 +212,9 @@ namespace Modding
                         continue;
 
                     Transform[] transforms =
-                        root.GetComponentsInChildren<Transform>(
-                            true);
+                        root.GetComponentsInChildren<
+                            Transform>(
+                                true);
 
                     for (int j = 0;
                          j < transforms.Length;
@@ -342,120 +234,17 @@ namespace Modding
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                Logger.APILogger.LogWarn(
+                    "PlayMaker2D existing-instance check failed: " +
+                    ex.Message);
             }
 
             return false;
         }
 
-        // Global FSM scan
-
-        private static void EnsureCurrentSceneFsms()
-        {
-            try
-            {
-                Scene activeScene =
-                    UnityEngine.SceneManagement.SceneManager.GetActiveScene();
-
-                if (!activeScene.IsValid() ||
-                    !activeScene.isLoaded)
-                {
-                    return;
-                }
-
-                EnsureSceneFsms(activeScene);
-            }
-            catch (Exception ex)
-            {
-                Logger.APILogger.LogWarn(
-                    "PlayMaker current-scene FSM scan failed: " +
-                    ex.Message);
-            }
-        }
-
-        private static void EnsureSceneFsms(
-            Scene scene)
-        {
-            if (!scene.IsValid() ||
-                !scene.isLoaded)
-            {
-                return;
-            }
-
-            try
-            {
-                PlayMakerFSM[] fsms =
-                    Resources.FindObjectsOfTypeAll<
-                        PlayMakerFSM>();
-
-                if (fsms == null)
-                    return;
-
-                int processed = 0;
-
-                for (int i = 0;
-                     i < fsms.Length;
-                     i++)
-                {
-                    PlayMakerFSM fsm =
-                        fsms[i];
-
-                    if (fsm == null)
-                        continue;
-
-                    try
-                    {
-                        GameObject go =
-                            fsm.gameObject;
-
-                        if (go == null)
-                            continue;
-
-                        Scene objectScene =
-                            go.scene;
-
-                        if (!objectScene.IsValid() ||
-                            !objectScene.isLoaded)
-                        {
-                            continue;
-                        }
-
-                        if (objectScene != scene)
-                        {
-                            continue;
-                        }
-
-                        EnsureInitialized(
-                            fsm,
-                            "scene scan");
-
-                        processed++;
-                    }
-                    catch
-                    {
-                    }
-                }
-
-                Logger.APILogger.LogDebug(
-                    "PlayMaker scene scan initialized " +
-                    processed +
-                    " FSM(s) in `" +
-                    scene.name +
-                    "`.");
-            }
-            catch (Exception ex)
-            {
-                Logger.APILogger.LogWarn(
-                    "PlayMaker FSM scene scan failed: " +
-                    ex.Message);
-            }
-        }
-
-        // FSM initialization
-
-        private static void PreprocessPlayMakerFsms(
-            GameObject root)
+        private static void PreprocessPlayMakerFsms(GameObject root)
         {
             if (root == null)
                 return;
@@ -484,9 +273,7 @@ namespace Modding
 
                     try
                     {
-                        EnsureInitialized(
-                            fsm,
-                            "prefab");
+                        fsm.Preprocess();
 
                         processed++;
                     }
@@ -495,6 +282,8 @@ namespace Modding
                         Logger.APILogger.LogWarn(
                             "Play Maker failed to preprocess FSM `" +
                             fsm.FsmName +
+                            "` on `" +
+                            fsm.gameObject.name +
                             "`: " +
                             ex.Message);
                     }
@@ -514,29 +303,6 @@ namespace Modding
                 Logger.APILogger.LogWarn(
                     "Play Maker FSM preprocessing failed: " +
                     ex);
-            }
-        }
-
-        private static void EnsureInitialized(
-            PlayMakerFSM fsm,
-            string reason)
-        {
-            if (fsm == null)
-                return;
-
-            try
-            {
-                fsm.Preprocess();
-            }
-            catch (Exception ex)
-            {
-                Logger.APILogger.LogWarn(
-                    "PlayMaker FSM initialization failed for `" +
-                    fsm.FsmName +
-                    "` during " +
-                    reason +
-                    ": " +
-                    ex.Message);
             }
         }
     }
