@@ -180,7 +180,15 @@ namespace Modding
 			}
 			catch (Exception ex)
 			{
-				Logger.APILogger.LogError($"HybridCLR.Initialize failed: {ex}");
+				Logger.APILogger.LogError($"HybridCLRInitializer.Initialize failed: {ex}");
+			}
+			try
+			{
+				AndroidCrashReporter.CheckPreviousCrash();
+			}
+			catch (Exception ex)
+			{
+				Logger.APILogger.LogError($"AndroidCrashReporter.CheckPreviousCrash failed: {ex}");
 			}
 			try
 			{
