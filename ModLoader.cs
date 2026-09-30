@@ -184,11 +184,11 @@ namespace Modding
 			}
 			try
 			{
-				AndroidCrashReporter.CheckPreviousCrash();
+				AndroidCrashReporter.Initialize();
 			}
 			catch (Exception ex)
 			{
-				Logger.APILogger.LogError($"AndroidCrashReporter.CheckPreviousCrash failed: {ex}");
+				Logger.APILogger.LogError($"AndroidCrashReporter.Initialize failed: {ex}");
 			}
 			try
 			{
@@ -216,7 +216,6 @@ namespace Modding
 			{
 				Logger.APILogger.LogError($"Failed to load global settings: {ex.Message}");
 			}
-
 			try
 			{
 				NativeCompat.Install();

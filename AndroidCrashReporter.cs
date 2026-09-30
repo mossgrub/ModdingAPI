@@ -1,294 +1,92 @@
 using System;
 using System.IO;
+using System.Text;
+using System.Threading;
 using UnityEngine;
 
 namespace Modding
 {
     internal static class AndroidCrashReporter
     {
-        private const string CrashLogName = "Crash.log";
+        private static int _installed;
 
-#if UNITY_ANDROID && !UNITY_EDITOR
+        private static readonly object FileLock =
+            new object();
 
-        public static void CheckPreviousCrash()
+        private static FileStream _stream;
+
+        private static StreamWriter _writer;
+
+        private static string _crashLogPath;
+
+        [RuntimeInitializeOnLoadMethod(
+            RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void Bootstrap()
         {
-            try
-            {
-                CheckPreviousCrashInternal();
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError(
-                    "Failed to inspect previous crash: " + ex);
-            }
+            Initialize();
         }
 
-        private static void CheckPreviousCrashInternal()
+        internal static void Initialize()
         {
-            string outputDirectory =
-                Application.persistentDataPath;
-
-            if (!Directory.Exists(outputDirectory))
+            if (Interlocked.Exchange(
+                    ref _installed,
+                    1) != 0)
             {
-                Directory.CreateDirectory(outputDirectory);
-            }
-
-            using (AndroidJavaClass activityManagerClass =
-                   new AndroidJavaClass("android.app.ActivityManager"))
-            using (AndroidJavaObject unityPlayer =
-                   new AndroidJavaClass("com.unity3d.player.UnityPlayer")
-                       .GetStatic<AndroidJavaObject>("currentActivity"))
-            using (AndroidJavaObject activityManager =
-                   unityPlayer.Call<AndroidJavaObject>(
-                       "getSystemService",
-                       "activity"))
-            {
-                int sdk =
-                    new AndroidJavaClass("android.os.Build$VERSION")
-                        .GetStatic<int>("SDK_INT");
-
-                if (sdk < 30)
-                {
-                    WriteMessage(
-                        "AndroidCrashReporter",
-                        "ApplicationExitInfo requires Android 11/API 30+.");
-
-                    return;
-                }
-
-                using (AndroidJavaClass exitInfoClass =
-                       new AndroidJavaClass(
-                           "android.app.ApplicationExitInfo"))
-                {
-                    int nativeCrashReason =
-                        exitInfoClass.GetStatic<int>(
-                            "REASON_CRASH_NATIVE");
-
-                    AndroidJavaObject exitList =
-                        activityManager.Call<AndroidJavaObject>(
-                            "getHistoricalProcessExitReasons",
-                            Application.identifier,
-                            0,
-                            10);
-
-                    if (exitList == null)
-                    {
-                        WriteMessage(
-                            "AndroidCrashReporter",
-                            "No ApplicationExitInfo list returned.");
-
-                        return;
-                    }
-
-                    int count =
-                        exitList.Call<int>("size");
-
-                    for (int i = 0; i < count; i++)
-                    {
-                        AndroidJavaObject exitInfo =
-                            exitList.Call<AndroidJavaObject>(
-                                "get",
-                                i);
-
-                        if (exitInfo == null)
-                            continue;
-
-                        int reason =
-                            exitInfo.Call<int>("getReason");
-
-                        if (reason != nativeCrashReason)
-                            continue;
-
-                        long timestamp =
-                            exitInfo.Call<long>("getTimestamp");
-
-                        string description =
-                            exitInfo.Call<string>(
-                                "getDescription");
-
-                        int importance =
-                            exitInfo.Call<int>(
-                                "getImportance");
-
-                        long pss =
-                            exitInfo.Call<long>(
-                                "getPss");
-
-                        long rss =
-                            exitInfo.Call<long>(
-                                "getRss");
-
-                        string stamp =
-                            DateTime.Now.ToString(
-                                "yyyyMMdd_HHmmss");
-
-                        string tombstonePath =
-                            Path.Combine(
-                                outputDirectory,
-                                "Crash_" +
-                                stamp +
-                                ".tombstone.pb");
-
-                        WriteCrashLog(
-                            outputDirectory,
-                            stamp,
-                            reason,
-                            timestamp,
-                            description,
-                            importance,
-                            pss,
-                            rss,
-                            tombstonePath);
-
-                        SaveTrace(
-                            exitInfo,
-                            tombstonePath);
-
-                        Logger.APILogger.LogError(
-                            "Previous native crash detected. " +
-                            "Crash.log and tombstone saved.");
-
-                        break;
-                    }
-                }
-            }
-        }
-
-        private static void WriteCrashLog(
-            string directory,
-            string stamp,
-            int reason,
-            long timestamp,
-            string description,
-            int importance,
-            long pss,
-            long rss,
-            string tombstonePath)
-        {
-            string logPath =
-                Path.Combine(
-                    directory,
-                    CrashLogName);
-
-            using (StreamWriter writer =
-                   new StreamWriter(
-                       logPath,
-                       false))
-            {
-                writer.WriteLine(
-                    "Detected: " +
-                    DateTime.Now.ToString(
-                        "yyyy-MM-dd HH:mm:ss"));
-
-                writer.WriteLine(
-                    "Crash ID: " +
-                    stamp);
-
-                writer.WriteLine(
-                    "Reason: " +
-                    reason);
-
-                writer.WriteLine(
-                    "Exit Timestamp: " +
-                    timestamp);
-
-                writer.WriteLine(
-                    "Description: " +
-                    (description ?? "<null>"));
-
-                writer.WriteLine(
-                    "Importance: " +
-                    importance);
-
-                writer.WriteLine(
-                    "PSS: " +
-                    pss);
-
-                writer.WriteLine(
-                    "RSS: " +
-                    rss);
-
-                writer.WriteLine(
-                    "Package: " +
-                    Application.identifier);
-
-                writer.WriteLine(
-                    "Unity Version: " +
-                    Application.unityVersion);
-
-                writer.WriteLine(
-                    "Device: " +
-                    SystemInfo.deviceModel);
-
-                writer.WriteLine(
-                    "Android: " +
-                    SystemInfo.operatingSystem);
-
-                writer.WriteLine(
-                    "ABI: " +
-                    SystemInfo.processorType);
-
-                writer.WriteLine(
-                    "Tombstone: " +
-                    tombstonePath);
-            }
-        }
-
-        private static void SaveTrace(
-            AndroidJavaObject exitInfo,
-            string outputPath)
-        {
-            AndroidJavaObject trace =
-                exitInfo.Call<AndroidJavaObject>(
-                    "getTraceInputStream");
-
-            if (trace == null)
-            {
-                WriteMessage(
-                    "AndroidCrashReporter",
-                    "getTraceInputStream returned null.");
-
                 return;
             }
 
-            byte[] buffer =
-                new byte[8192];
-
             try
             {
-                using (FileStream output =
-                       new FileStream(
-                           outputPath,
-                           FileMode.Create,
-                           FileAccess.Write,
-                           FileShare.Read))
-                {
-                    while (true)
-                    {
-                        int read =
-                            trace.Call<int>(
-                                "read",
-                                buffer,
-                                0,
-                                buffer.Length);
+                string directory =
+                    Application.persistentDataPath;
 
-                        if (read <= 0)
-                            break;
+                Directory.CreateDirectory(
+                    directory);
 
-                        output.Write(
-                            buffer,
-                            0,
-                            read);
-                    }
+                _crashLogPath =
+                    Path.Combine(
+                        directory,
+                        "Crash.log");
 
-                    output.Flush(true);
-                }
+                OpenManagedLog();
+
+                Write(
+                    "AndroidCrashReporter initialized");
+
+                Write(
+                    "Persistent path: " +
+                    Application.persistentDataPath);
+
+                bool nativeInstalled =
+                    NativeBridge.InstallCrashHandler(
+                        _crashLogPath);
+
+                Write(
+                    "Native crash handler installed: " +
+                    nativeInstalled);
+
+                Application
+                    .logMessageReceivedThreaded
+                    += HandleUnityLog;
+
+                AppDomain.CurrentDomain
+                    .UnhandledException
+                    += HandleUnhandledException;
+
+                Write(
+                    "Crash reporter ready.");
             }
-            finally
+            catch (Exception ex)
             {
                 try
                 {
-                    trace.Call("close");
+                    File.AppendAllText(
+                        Path.Combine(
+                            Application.persistentDataPath,
+                            "Crash.log"),
+                        "\nCrashReporter initialization failure\n" +
+                        ex +
+                        "\n");
                 }
                 catch
                 {
@@ -296,39 +94,118 @@ namespace Modding
             }
         }
 
-        private static void WriteMessage(
-            string source,
+        internal static void Install()
+        {
+            Initialize();
+        }
+
+        private static void OpenManagedLog()
+        {
+            lock (FileLock)
+            {
+                if (_writer != null)
+                    return;
+
+                _stream =
+                    new FileStream(
+                        _crashLogPath,
+                        FileMode.Append,
+                        FileAccess.Write,
+                        FileShare.ReadWrite);
+
+                _writer =
+                    new StreamWriter(
+                        _stream,
+                        new UTF8Encoding(false))
+                    {
+                        AutoFlush = true
+                    };
+            }
+        }
+
+        private static void HandleUnityLog(
+            string message,
+            string stackTrace,
+            LogType type)
+        {
+            if (type != LogType.Error &&
+                type != LogType.Exception &&
+                type != LogType.Assert &&
+                type != LogType.Warning)
+            {
+                return;
+            }
+
+            Write(
+                "[" +
+                type +
+                "] " +
+                message);
+
+            if (!string.IsNullOrEmpty(
+                    stackTrace))
+            {
+                Write(
+                    stackTrace);
+            }
+        }
+
+        private static void HandleUnhandledException(
+            object sender,
+            UnhandledExceptionEventArgs args)
+        {
+            Write(
+                "[UNHANDLED EXCEPTION]");
+
+            if (args.ExceptionObject != null)
+            {
+                Write(
+                    args.ExceptionObject.ToString());
+            }
+
+            Write(
+                "IsTerminating: " +
+                args.IsTerminating);
+        }
+
+        internal static void Write(
             string message)
         {
             try
             {
-                string path =
-                    Path.Combine(
-                        Application.persistentDataPath,
-                        CrashLogName);
+                lock (FileLock)
+                {
+                    if (_writer == null)
+                        return;
 
-                File.AppendAllText(
-                    path,
-                    "[" +
-                    DateTime.Now.ToString(
-                        "yyyy-MM-dd HH:mm:ss") +
-                    "] [" +
-                    source +
-                    "] " +
-                    message +
-                    Environment.NewLine);
+                    _writer.WriteLine(
+                        "[" +
+                        DateTime.UtcNow.ToString(
+                            "yyyy-MM-dd HH:mm:ss.fff") +
+                        "] " +
+                        message);
+
+                    _writer.Flush();
+
+                    try
+                    {
+                        _stream.Flush(true);
+                    }
+                    catch
+                    {
+                    }
+                }
             }
             catch
             {
             }
         }
 
-#else
-
-        public static void CheckPreviousCrash()
+        internal static void SetContext(
+            string context)
         {
+            NativeBridge.SetCrashContext(
+                context);
         }
-
-#endif
     }
 }

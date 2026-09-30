@@ -24,6 +24,76 @@ namespace Modding
         private static Dictionary<MethodInfo, IntPtr>
     _currentNativeSelf;
 
+        private static string BuildCrashContext(BridgeState st)
+        {
+            if (st == null)
+                return "Null BridgeState";
+
+            string targetAssembly = "?";
+            string targetMethod = "?";
+            string replacementAssembly = "?";
+            string replacementMethod = "?";
+
+            try
+            {
+                if (st.Target != null)
+                {
+                    if (st.Target.DeclaringType != null)
+                    {
+                        targetAssembly =
+                            st.Target.DeclaringType
+                                .Assembly
+                                .GetName()
+                                .Name;
+                    }
+
+                    targetMethod =
+                        st.Target.DeclaringType?.FullName +
+                        "." +
+                        st.Target.Name;
+                }
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                MethodInfo replacementInfo =
+                    st.Replacement?.Method;
+
+                if (replacementInfo != null)
+                {
+                    if (replacementInfo.DeclaringType != null)
+                    {
+                        replacementAssembly =
+                            replacementInfo.DeclaringType
+                                .Assembly
+                                .GetName()
+                                .Name;
+                    }
+
+                    replacementMethod =
+                        replacementInfo.DeclaringType?.FullName +
+                        "." +
+                        replacementInfo.Name;
+                }
+            }
+            catch
+            {
+            }
+
+            return
+                "TargetAssembly=" +
+                targetAssembly +
+                " | Target=" +
+                targetMethod +
+                " | ReplacementAssembly=" +
+                replacementAssembly +
+                " | Replacement=" +
+                replacementMethod;
+        }
+
         private static IntPtr PushNativeSelf(
         MethodInfo method,
         IntPtr self,
@@ -984,6 +1054,8 @@ namespace Modding
             if (!BridgeStates.TryGetValue(typeof(TSlot), out BridgeState st) || st.Orig == null)
                 return;
 
+            NativeBridge.SetCrashContext(BuildCrashContext(st));
+
             IntPtr rawSelf = IntPtr.Zero;
             bool hadPreviousSelf = false;
             IntPtr previousSelf = IntPtr.Zero;
@@ -1161,6 +1233,8 @@ namespace Modding
                     st.Target,
                     hadPreviousSelf,
                     previousSelf);
+
+                NativeBridge.SetCrashContext(null);
             }
         }
 
@@ -1170,6 +1244,8 @@ namespace Modding
 
             if (!BridgeStates.TryGetValue(typeof(TSlot), out BridgeState st))
                 return default;
+
+            NativeBridge.SetCrashContext(BuildCrashContext(st));
 
             TryRebuildOrig(st);
 
@@ -1396,6 +1472,8 @@ namespace Modding
                     st.Target,
                     hadPreviousSelf,
                     previousSelf);
+
+                NativeBridge.SetCrashContext(null);
             }
         }
 

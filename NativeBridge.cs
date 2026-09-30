@@ -31,6 +31,15 @@ namespace Modding
         [DllImport("modding_native", EntryPoint = "mod2_managed_handle_to_native")]
         private static extern IntPtr ManagedHandleToNative(uint managedHandle);
 
+        [DllImport("modding_native", EntryPoint = "mod2_set_crash_log_path", CallingConvention = CallingConvention.Cdecl)]
+        private static extern void SetCrashLogPathNative([MarshalAs(UnmanagedType.LPStr)] string path);
+
+        [DllImport("modding_native", EntryPoint = "mod2_set_crash_context", CallingConvention = CallingConvention.Cdecl)]
+        private static extern void SetCrashContextNative([MarshalAs(UnmanagedType.LPStr)] string context);
+
+        [DllImport("modding_native", EntryPoint = "mod2_install_crash_handler", CallingConvention = CallingConvention.Cdecl)]
+        private static extern int InstallCrashHandlerNative();
+
         private static bool _initTried;
         private static bool _ready;
         private static bool _takeMPHookInstalled;
@@ -51,6 +60,39 @@ namespace Modding
             {
                 try { SetLogFileNative(Application.persistentDataPath + "/NativeLog.txt"); }
                 catch (Exception ex) { Logger.APILogger.LogWarn("Could not set native log file: " + ex.Message); }
+            }
+        }
+
+        internal static bool InstallCrashHandler(string path)
+        {
+            try
+            {
+                SetCrashLogPathNative(path);
+
+                return InstallCrashHandlerNative() != 0;
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogWarn(
+                    "Native crash handler installation failed: " +
+                    ex.Message);
+
+                return false;
+            }
+        }
+
+        internal static void SetCrashContext(
+            string context)
+        {
+            try
+            {
+                SetCrashContextNative(
+                    string.IsNullOrEmpty(context)
+                        ? "No managed crash context"
+                        : context);
+            }
+            catch
+            {
             }
         }
 
