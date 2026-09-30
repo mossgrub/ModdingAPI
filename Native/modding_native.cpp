@@ -11,11 +11,497 @@
 #include <errno.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <signal.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <ucontext.h>
+#include <stdint.h>
+#include <string.h>
+#include <stdlib.h>
 
 #define LOG_TAG "ModdingNative"
 
 static char g_logPath[1024] = {0};
 static pthread_mutex_t g_logLock = PTHREAD_MUTEX_INITIALIZER;
+
+namespace
+{
+    static volatile sig_atomic_t g_crashHandlerInstalled = 0;
+    static volatile sig_atomic_t g_crashHandlerRunning = 0;
+
+    static struct sigaction g_previousCrashActions[NSIG];
+
+    static char g_crashLogPath[512] =
+        "/storage/emulated/0/Android/data/"
+        "com.TeamCherry.HollowKnight/files/Crash.log";
+
+    static thread_local char g_crashContext[512] =
+        "No managed crash context";
+
+    static size_t CrashAppend(
+        char *buffer,
+        size_t capacity,
+        size_t position,
+        const char *text)
+    {
+        if (!buffer || !text || position >= capacity)
+            return position;
+
+        while (*text && position + 1 < capacity)
+        {
+            buffer[position++] = *text++;
+        }
+
+        buffer[position] = '\0';
+
+        return position;
+    }
+
+    static size_t CrashAppendHex(
+        char *buffer,
+        size_t capacity,
+        size_t position,
+        uintptr_t value)
+    {
+        static const char hex[] =
+            "0123456789ABCDEF";
+
+        if (position >= capacity)
+            return position;
+
+        position = CrashAppend(
+            buffer,
+            capacity,
+            position,
+            "0x");
+
+        char temp[
+            sizeof(uintptr_t) * 2
+        ];
+
+        int count = 0;
+
+        do
+        {
+            temp[count++] =
+                hex[value & 0xF];
+
+            value >>= 4;
+        }
+        while (value != 0 &&
+               count <
+               (int)sizeof(temp));
+
+        while (count > 0 &&
+               position + 1 < capacity)
+        {
+            buffer[position++] =
+                temp[--count];
+        }
+
+        buffer[position] = '\0';
+
+        return position;
+    }
+
+    static size_t CrashAppendDec(
+        char *buffer,
+        size_t capacity,
+        size_t position,
+        int value)
+    {
+        char temp[32];
+
+        int negative = value < 0;
+
+        unsigned int v =
+            negative
+                ? (unsigned int)(-value)
+                : (unsigned int)value;
+
+        int count = 0;
+
+        do
+        {
+            temp[count++] =
+                (char)('0' + (v % 10));
+
+            v /= 10;
+        }
+        while (v != 0 &&
+               count < (int)sizeof(temp));
+
+        if (negative)
+            temp[count++] = '-';
+
+        while (count > 0 &&
+               position + 1 < capacity)
+        {
+            buffer[position++] =
+                temp[--count];
+        }
+
+        buffer[position] = '\0';
+
+        return position;
+    }
+
+    static size_t CrashAppendContext(
+        char *buffer,
+        size_t capacity,
+        size_t position)
+    {
+        position = CrashAppend(
+            buffer,
+            capacity,
+            position,
+            g_crashContext);
+
+        return position;
+    }
+
+    static void GetCrashRegisters(
+        void *ucontext,
+        uintptr_t &pc,
+        uintptr_t &sp,
+        uintptr_t &lr)
+    {
+        pc = 0;
+        sp = 0;
+        lr = 0;
+
+#if defined(__aarch64__)
+
+        ucontext_t *context =
+            reinterpret_cast<ucontext_t *>(ucontext);
+
+        pc =
+            (uintptr_t)context->uc_mcontext.pc;
+
+        sp =
+            (uintptr_t)context->uc_mcontext.sp;
+
+        lr =
+            (uintptr_t)context->uc_mcontext.regs[30];
+
+#elif defined(__arm__)
+
+        ucontext_t *context =
+            reinterpret_cast<ucontext_t *>(ucontext);
+
+        pc =
+            (uintptr_t)context->uc_mcontext.arm_pc;
+
+        sp =
+            (uintptr_t)context->uc_mcontext.arm_sp;
+
+        lr =
+            (uintptr_t)context->uc_mcontext.arm_lr;
+
+#endif
+    }
+
+    static void ForwardCrashSignal(
+        int signalNumber,
+        siginfo_t *info,
+        void *ucontext)
+    {
+        if (signalNumber > 0 &&
+            signalNumber < NSIG)
+        {
+            struct sigaction previous =
+                g_previousCrashActions[signalNumber];
+
+            if ((previous.sa_flags & SA_SIGINFO) != 0)
+            {
+                if (previous.sa_sigaction != nullptr)
+                {
+                    previous.sa_sigaction(
+                        signalNumber,
+                        info,
+                        ucontext);
+
+                    return;
+                }
+            }
+            else
+            {
+                if (previous.sa_handler != nullptr &&
+                    previous.sa_handler != SIG_DFL &&
+                    previous.sa_handler != SIG_IGN)
+                {
+                    previous.sa_handler(
+                        signalNumber);
+
+                    return;
+                }
+
+                if (previous.sa_handler == SIG_IGN)
+                {
+                    return;
+                }
+            }
+        }
+
+        struct sigaction defaultAction;
+
+        memset(
+            &defaultAction,
+            0,
+            sizeof(defaultAction));
+
+        sigemptyset(
+            &defaultAction.sa_mask);
+
+        defaultAction.sa_handler =
+            SIG_DFL;
+
+        sigaction(
+            signalNumber,
+            &defaultAction,
+            nullptr);
+
+        kill(
+            getpid(),
+            signalNumber);
+    }
+
+    static void ModdingCrashHandler(
+        int signalNumber,
+        siginfo_t *info,
+        void *ucontext)
+    {
+        if (g_crashHandlerRunning)
+        {
+            _exit(128 + signalNumber);
+        }
+
+        g_crashHandlerRunning = 1;
+
+        char buffer[4096];
+
+        size_t length = 0;
+
+        uintptr_t pc;
+        uintptr_t sp;
+        uintptr_t lr;
+
+        GetCrashRegisters(
+            ucontext,
+            pc,
+            sp,
+            lr);
+
+        length = CrashAppend(
+            buffer,
+            sizeof(buffer),
+            length,
+            "Signal: ");
+
+        length = CrashAppendDec(
+            buffer,
+            sizeof(buffer),
+            length,
+            signalNumber);
+
+        length = CrashAppend(
+            buffer,
+            sizeof(buffer),
+            length,
+            "\nFault address: ");
+
+        length = CrashAppendHex(
+            buffer,
+            sizeof(buffer),
+            length,
+            info
+                ? (uintptr_t)info->si_addr
+                : 0);
+
+        length = CrashAppend(
+            buffer,
+            sizeof(buffer),
+            length,
+            "\nPC: ");
+
+        length = CrashAppendHex(
+            buffer,
+            sizeof(buffer),
+            length,
+            pc);
+
+        length = CrashAppend(
+            buffer,
+            sizeof(buffer),
+            length,
+            "\nLR: ");
+
+        length = CrashAppendHex(
+            buffer,
+            sizeof(buffer),
+            length,
+            lr);
+
+        length = CrashAppend(
+            buffer,
+            sizeof(buffer),
+            length,
+            "\nSP: ");
+
+        length = CrashAppendHex(
+            buffer,
+            sizeof(buffer),
+            length,
+            sp);
+
+        length = CrashAppend(
+            buffer,
+            sizeof(buffer),
+            length,
+            "\nManaged context: ");
+
+        length = CrashAppendContext(
+            buffer,
+            sizeof(buffer),
+            length);
+
+        int fd =
+            open(
+                g_crashLogPath,
+                O_WRONLY |
+                O_CREAT |
+                O_APPEND,
+                0666);
+
+        if (fd >= 0)
+        {
+            ssize_t written =
+                write(
+                    fd,
+                    buffer,
+                    length);
+
+            (void)written;
+
+            close(fd);
+        }
+
+        ForwardCrashSignal(
+            signalNumber,
+            info,
+            ucontext);
+
+        _exit(128 + signalNumber);
+    }
+}
+
+extern "C"
+__attribute__((visibility("default")))
+void mod2_set_crash_log_path(
+    const char *path)
+{
+    if (!path || !path[0])
+        return;
+
+    size_t length =
+        strlen(path);
+
+    if (length >=
+        sizeof(g_crashLogPath))
+    {
+        length =
+            sizeof(g_crashLogPath) - 1;
+    }
+
+    memcpy(
+        g_crashLogPath,
+        path,
+        length);
+
+    g_crashLogPath[length] =
+        '\0';
+}
+
+extern "C"
+__attribute__((visibility("default")))
+void mod2_set_crash_context(
+    const char *context)
+{
+    if (!context)
+        context = "No managed crash context";
+
+    size_t length =
+        strlen(context);
+
+    if (length >=
+        sizeof(g_crashContext))
+    {
+        length =
+            sizeof(g_crashContext) - 1;
+    }
+
+    memcpy(
+        g_crashContext,
+        context,
+        length);
+
+    g_crashContext[length] =
+        '\0';
+}
+
+extern "C"
+__attribute__((visibility("default")))
+int mod2_install_crash_handler()
+{
+    if (g_crashHandlerInstalled)
+        return 1;
+
+    const int signals[] =
+    {
+        SIGSEGV,
+        SIGBUS,
+        SIGABRT,
+        SIGILL,
+        SIGFPE
+    };
+
+    for (size_t i = 0;
+         i < sizeof(signals) / sizeof(signals[0]);
+         i++)
+    {
+        int signalNumber =
+            signals[i];
+
+        struct sigaction action;
+
+        memset(
+            &action,
+            0,
+            sizeof(action));
+
+        sigemptyset(
+            &action.sa_mask);
+
+        action.sa_sigaction =
+            ModdingCrashHandler;
+
+        action.sa_flags =
+            SA_SIGINFO;
+
+        if (sigaction(
+                signalNumber,
+                &action,
+                &g_previousCrashActions[signalNumber])
+            != 0)
+        {
+            return 0;
+        }
+    }
+
+    g_crashHandlerInstalled = 1;
+
+    return 1;
+}
 
 static void FileAppend(const char *line)
 {
