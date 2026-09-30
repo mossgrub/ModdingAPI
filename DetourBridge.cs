@@ -236,18 +236,27 @@ namespace Modding
 
         private sealed class BridgeState
         {
-            public List<Delegate> Handlers = new List<Delegate>();
+            public List<Delegate> Handlers =
+                new List<Delegate>();
+
             public Delegate Orig;
 
             public Delegate Bridge;
 
+            public Delegate TrampolineDelegate;
+
             public Delegate Replacement;
+
             public int[] RefIndexes;
 
             public MethodInfo Target;
+
             public IntPtr NativeMethod;
+
             public IntPtr Trampoline;
+
             public bool InstanceCall;
+
             public Type OrigParamType;
         }
 
@@ -478,29 +487,142 @@ namespace Modding
 
         private sealed class OrigAdapter
         {
-            public MethodInfo Target;
-            public IntPtr NativeMethod;
-            public IntPtr Trampoline;
-            public bool InstanceCall;
+            public BridgeState State;
 
-            private object InvokeOrig(params object[] all)
-                => NativeBridge.InvokeOrig(Target, NativeMethod, Trampoline, InstanceCall, all);
+            private object InvokeOrig(
+                params object[] all)
+            {
+                if (State == null)
+                    return null;
 
-            public void F0() => InvokeOrig(Array.Empty<object>());
-            public void F1<T0>(T0 a0) => InvokeOrig(a0);
-            public void F2<T0, T1>(T0 a0, T1 a1) => InvokeOrig(a0, a1);
-            public void F3<T0, T1, T2>(T0 a0, T1 a1, T2 a2) => InvokeOrig(a0, a1, a2);
-            public void F4<T0, T1, T2, T3>(T0 a0, T1 a1, T2 a2, T3 a3) => InvokeOrig(a0, a1, a2, a3);
-            public void F5<T0, T1, T2, T3, T4>(T0 a0, T1 a1, T2 a2, T3 a3, T4 a4) => InvokeOrig(a0, a1, a2, a3, a4);
-            public void F6<T0, T1, T2, T3, T4, T5>(T0 a0, T1 a1, T2 a2, T3 a3, T4 a4, T5 a5) => InvokeOrig(a0, a1, a2, a3, a4, a5);
+                return InvokeTrampolineFromManaged(
+                    State,
+                    all);
+            }
 
-            public R G0<R>() => (R)InvokeOrig(Array.Empty<object>());
-            public R G1<T0, R>(T0 a0) => (R)InvokeOrig(a0);
-            public R G2<T0, T1, R>(T0 a0, T1 a1) => (R)InvokeOrig(a0, a1);
-            public R G3<T0, T1, T2, R>(T0 a0, T1 a1, T2 a2) => (R)InvokeOrig(a0, a1, a2);
-            public R G4<T0, T1, T2, T3, R>(T0 a0, T1 a1, T2 a2, T3 a3) => (R)InvokeOrig(a0, a1, a2, a3);
-            public R G5<T0, T1, T2, T3, T4, R>(T0 a0, T1 a1, T2 a2, T3 a3, T4 a4) => (R)InvokeOrig(a0, a1, a2, a3, a4);
-            public R G6<T0, T1, T2, T3, T4, T5, R>(T0 a0, T1 a1, T2 a2, T3 a3, T4 a4, T5 a5) => (R)InvokeOrig(a0, a1, a2, a3, a4, a5);
+            public void F0()
+                => InvokeOrig(
+                    Array.Empty<object>());
+
+            public void F1<T0>(
+                T0 a0)
+                => InvokeOrig(a0);
+
+            public void F2<T0, T1>(
+                T0 a0,
+                T1 a1)
+                => InvokeOrig(a0, a1);
+
+            public void F3<T0, T1, T2>(
+                T0 a0,
+                T1 a1,
+                T2 a2)
+                => InvokeOrig(
+                    a0,
+                    a1,
+                    a2);
+
+            public void F4<T0, T1, T2, T3>(
+                T0 a0,
+                T1 a1,
+                T2 a2,
+                T3 a3)
+                => InvokeOrig(
+                    a0,
+                    a1,
+                    a2,
+                    a3);
+
+            public void F5<T0, T1, T2, T3, T4>(
+                T0 a0,
+                T1 a1,
+                T2 a2,
+                T3 a3,
+                T4 a4)
+                => InvokeOrig(
+                    a0,
+                    a1,
+                    a2,
+                    a3,
+                    a4);
+
+            public void F6<T0, T1, T2, T3, T4, T5>(
+                T0 a0,
+                T1 a1,
+                T2 a2,
+                T3 a3,
+                T4 a4,
+                T5 a5)
+                => InvokeOrig(
+                    a0,
+                    a1,
+                    a2,
+                    a3,
+                    a4,
+                    a5);
+
+            public R G0<R>()
+                => (R)InvokeOrig(
+                    Array.Empty<object>());
+
+            public R G1<T0, R>(
+                T0 a0)
+                => (R)InvokeOrig(a0);
+
+            public R G2<T0, T1, R>(
+                T0 a0,
+                T1 a1)
+                => (R)InvokeOrig(
+                    a0,
+                    a1);
+
+            public R G3<T0, T1, T2, R>(
+                T0 a0,
+                T1 a1,
+                T2 a2)
+                => (R)InvokeOrig(
+                    a0,
+                    a1,
+                    a2);
+
+            public R G4<T0, T1, T2, T3, R>(
+                T0 a0,
+                T1 a1,
+                T2 a2,
+                T3 a3)
+                => (R)InvokeOrig(
+                    a0,
+                    a1,
+                    a2,
+                    a3);
+
+            public R G5<T0, T1, T2, T3, T4, R>(
+                T0 a0,
+                T1 a1,
+                T2 a2,
+                T3 a3,
+                T4 a4)
+                => (R)InvokeOrig(
+                    a0,
+                    a1,
+                    a2,
+                    a3,
+                    a4);
+
+            public R G6<T0, T1, T2, T3, T4, T5, R>(
+                T0 a0,
+                T1 a1,
+                T2 a2,
+                T3 a3,
+                T4 a4,
+                T5 a5)
+                => (R)InvokeOrig(
+                    a0,
+                    a1,
+                    a2,
+                    a3,
+                    a4,
+                    a5);
         }
 
         private static readonly MethodInfo[] OrigForwardVoid =
@@ -609,14 +731,216 @@ namespace Modding
             }
         }
 
+        private static Delegate CreateTrampolineDelegate(
+            BridgeState st)
+        {
+            if (st == null ||
+                st.Trampoline == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            if (st.Bridge == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                return Marshal.GetDelegateForFunctionPointer(
+                    st.Trampoline,
+                    st.Bridge.GetType());
+            }
+            catch (Exception ex)
+            {
+                Logger.APILogger.LogError(
+                    "Could not create trampoline delegate for " +
+                    (st.Target != null
+                        ? st.Target.Name
+                        : "?") +
+                    ": " +
+                    ex);
+
+                return null;
+            }
+        }
+
+        private static object InvokeRawTrampoline(
+            BridgeState st,
+            object[] rawArgs)
+        {
+            if (st == null ||
+                st.TrampolineDelegate == null)
+            {
+                throw new InvalidOperationException(
+                    "No raw trampoline delegate is available.");
+            }
+
+            try
+            {
+                return st.TrampolineDelegate.DynamicInvoke(
+                    rawArgs);
+            }
+            catch (TargetInvocationException tie)
+            {
+                if (tie.InnerException != null)
+                    throw tie.InnerException;
+
+                throw;
+            }
+        }
+
+        private static object[] BuildRawTrampolineArguments(
+            BridgeState st,
+            object[] managedArgs)
+        {
+            if (st == null ||
+                st.Target == null ||
+                st.TrampolineDelegate == null)
+            {
+                return Array.Empty<object>();
+            }
+
+            ParameterInfo[] rawParameters =
+                st.TrampolineDelegate.Method.GetParameters();
+
+            object[] rawArgs =
+                new object[rawParameters.Length];
+
+            for (int i = 0;
+                 i < rawParameters.Length;
+                 i++)
+            {
+                Type rawType =
+                    rawParameters[i].ParameterType;
+
+                Type targetType =
+                    GetBridgeArgumentType(
+                        st,
+                        i);
+
+                object value =
+                    managedArgs != null &&
+                    i < managedArgs.Length
+                        ? managedArgs[i]
+                        : null;
+
+                if (rawType == typeof(IntPtr))
+                {
+                    if (value is IntPtr)
+                    {
+                        rawArgs[i] = value;
+                    }
+                    else if (value == null)
+                    {
+                        rawArgs[i] = IntPtr.Zero;
+                    }
+                    else
+                    {
+                        rawArgs[i] =
+                            NativeBridge.ObjectToPtr(
+                                value);
+                    }
+
+                    continue;
+                }
+
+                if (rawType == typeof(DieCause) &&
+                    Nullable.GetUnderlyingType(
+                        targetType) == typeof(float))
+                {
+                    if (value == null)
+                    {
+                        rawArgs[i] =
+                            new DieCause
+                            {
+                                hasValue = false,
+                                value = 0f
+                            };
+                    }
+                    else
+                    {
+                        rawArgs[i] =
+                            new DieCause
+                            {
+                                hasValue = true,
+                                value = (float)value
+                            };
+                    }
+
+                    continue;
+                }
+
+                rawArgs[i] = value;
+            }
+
+            return rawArgs;
+        }
+
+        private static object ConvertRawTrampolineReturn(
+            BridgeState st,
+            object rawResult)
+        {
+            if (st == null ||
+                st.Target == null)
+            {
+                return rawResult;
+            }
+
+            Type returnType =
+                st.Target.ReturnType;
+
+            if (returnType == typeof(void))
+                return null;
+
+            if (IsRefTypeForBridge(returnType))
+            {
+                if (rawResult == null)
+                    return null;
+
+                IntPtr nativeResult =
+                    rawResult is IntPtr
+                        ? (IntPtr)rawResult
+                        : IntPtr.Zero;
+
+                if (nativeResult == IntPtr.Zero)
+                    return null;
+
+                return NativeBridge.FromObjectPtr(
+                    nativeResult,
+                    returnType);
+            }
+
+            return rawResult;
+        }
+
+        private static object InvokeTrampolineFromManaged(
+            BridgeState st,
+            object[] managedArgs)
+        {
+            object[] rawArgs =
+                BuildRawTrampolineArguments(
+                    st,
+                    managedArgs);
+
+            object rawResult =
+                InvokeRawTrampoline(
+                    st,
+                    rawArgs);
+
+            return ConvertRawTrampolineReturn(
+                st,
+                rawResult);
+        }
+
         public static Type GetDelegateTypeForMethod(MethodInfo method)
         {
             return GetDelegateTypeForMethod(method, out _);
         }
 
         private static Type GetManagedBridgeArgumentType(
-    MethodInfo method,
-    int bridgeIndex)
+            MethodInfo method,
+            int bridgeIndex)
         {
             if (method == null)
             {
@@ -1018,19 +1342,27 @@ namespace Modding
 
         private static void TryRebuildOrig(BridgeState st)
         {
-            if (st.Orig != null || st.Trampoline == IntPtr.Zero ||
-                st.NativeMethod == IntPtr.Zero || st.Target == null)
-                return;
+            if (st.TrampolineDelegate == null &&
+                st.Trampoline != IntPtr.Zero &&
+                st.Bridge != null &&
+                st.Target != null &&
+                st.Target != typeof(Assembly)
+                    .GetMethod(
+                        "get_Location",
+                        BindingFlags.Public |
+                        BindingFlags.Instance))
+            {
+                st.TrampolineDelegate =
+                    CreateTrampolineDelegate(st);
+            }
 
             try
             {
-                var adapter = new OrigAdapter
-                {
-                    Target = st.Target,
-                    NativeMethod = st.NativeMethod,
-                    Trampoline = st.Trampoline,
-                    InstanceCall = st.InstanceCall
-                };
+                var adapter =
+                    new OrigAdapter
+                    {
+                        State = st
+                    };
                 Type pt = st.OrigParamType;
                 if (pt == null && st.Replacement != null)
                 {
@@ -1183,12 +1515,7 @@ namespace Modding
 
                     try
                     {
-                        NativeBridge.InvokeOrig(
-                            st.Target,
-                            st.NativeMethod,
-                            st.Trampoline,
-                            st.InstanceCall,
-                            nativeArgs);
+                        InvokeRawTrampoline(st, nativeArgs);
                     }
                     catch (Exception ex)
                     {
@@ -1233,8 +1560,6 @@ namespace Modding
                     st.Target,
                     hadPreviousSelf,
                     previousSelf);
-
-                NativeBridge.SetCrashContext(null);
             }
         }
 
@@ -1377,12 +1702,11 @@ namespace Modding
                     try
                     {
                         object fallbackResult =
-                            NativeBridge.InvokeOrig(
-                                st.Target,
-                                st.NativeMethod,
-                                st.Trampoline,
-                                st.InstanceCall,
-                                nativeArgs);
+                            ConvertRawTrampolineReturn(
+                                st,
+                                InvokeRawTrampoline(
+                                    st,
+                                    nativeArgs));
 
                         R fallbackConverted;
 
@@ -1472,8 +1796,6 @@ namespace Modding
                     st.Target,
                     hadPreviousSelf,
                     previousSelf);
-
-                NativeBridge.SetCrashContext(null);
             }
         }
 
@@ -1606,20 +1928,19 @@ namespace Modding
                 return mapped;
             }
 
-            try { return self != null ? self.Location : string.Empty; }
-            catch { return string.Empty; }
+            return string.Empty;
         }
 
         public static bool TryInstallConcreteDetour(
-    MethodInfo target,
-    Type slotType,
-    Type delegateType,
-    Type origType,
-    MethodInfo concreteBridge,
-    Delegate replacement,
-    int[] refIndexes,
-    out Delegate orig,
-    out string error)
+            MethodInfo target,
+            Type slotType,
+            Type delegateType,
+            Type origType,
+            MethodInfo concreteBridge,
+            Delegate replacement,
+            int[] refIndexes,
+            out Delegate orig,
+            out string error)
         {
             orig = null;
             error = null;
@@ -1915,6 +2236,32 @@ namespace Modding
             state.Trampoline =
                 trampPtr;
 
+            if (slotType != typeof(LocationSlot))
+            {
+                state.TrampolineDelegate =
+                    CreateTrampolineDelegate(state);
+
+                if (state.TrampolineDelegate == null)
+                {
+                    TryUnhook(targetAddr);
+
+                    BridgeStates.TryRemove(
+                        slotType,
+                        out _);
+
+                    error =
+                        "Could not create raw trampoline delegate for " +
+                        target.DeclaringType?.FullName +
+                        "." +
+                        target.Name;
+
+                    Logger.APILogger.LogError(
+                        error);
+
+                    return false;
+                }
+            }
+
             // Build the managed orig delegate from the native trampoline.
 
             Type origParamType =
@@ -1927,10 +2274,7 @@ namespace Modding
             var adapter =
                 new OrigAdapter
                 {
-                    Target = target,
-                    NativeMethod = nativeMethod,
-                    Trampoline = trampPtr,
-                    InstanceCall = !target.IsStatic
+                    State = state
                 };
 
             orig =
